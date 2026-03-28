@@ -12,14 +12,14 @@ pip install -r requirements.txt
 cp .env.example .env
 # Para usar SQLite local (modo dev/edge):
 #   DB_URL=sqlite:///./local.db   USE_SQLITE=1
-uvicorn app.main:app --reload --port 8000
+hypercorn app.main:app --reload --bind 0.0.0.0:8000
 ```
 
 ## ▶️ Ejecutar con Postgres (Docker)
 ```bash
 docker compose up -d postgres
 # Ajusta .env a DB_URL=postgresql+psycopg://postgres:postgres@localhost:5432/digestor
-uvicorn app.main:app --reload --port 8000
+hypercorn app.main:app --reload --bind 0.0.0.0:8000
 ```
 
 ## Variables .env

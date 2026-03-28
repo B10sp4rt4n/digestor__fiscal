@@ -1,5 +1,5 @@
 fastapi==0.112.2
-uvicorn[standard]==0.30.6
+hypercorn==0.17.3
 sqlalchemy==2.0.35
 psycopg[binary]==3.2.1
 pydantic==2.9.2

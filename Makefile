@@ -4,7 +4,7 @@ install:
 	python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 
 run:
-	uvicorn app.main:app --reload --port 8000
+	hypercorn app.main:app --reload --bind 0.0.0.0:8000
 
 migrate:
 	alembic upgrade head

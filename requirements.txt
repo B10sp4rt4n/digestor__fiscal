@@ -14,3 +14,5 @@ opencv-python-headless==4.12.0.88
 bcrypt==4.2.0
 python-jose[cryptography]==3.3.0
 streamlit-cookies-controller>=0.0.4
+groq>=0.11.0
+instructor>=1.4.0

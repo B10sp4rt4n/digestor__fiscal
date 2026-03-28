@@ -1,9 +1,15 @@
 """
 Servicio de ingestión de PDFs y ZIPs con CSFs del SAT.
 Extrae datos fiscales, genera hashes y valida el QR opcionalmente.
+
+Parser híbrido:
+  - Fast path: regex segmentado por secciones del documento CSF
+  - Fallback:   Groq LLM (llama-3.1-8b-instant) con structured output via instructor
+                cuando algún campo clave no se puede extraer con regex.
 """
 import hashlib
 import io
+import logging
 import os
 import re
 import ssl
@@ -16,10 +22,13 @@ import fitz
 import numpy as np
 import requests
 import urllib3
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from requests.exceptions import SSLError as RequestsSSLError
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Caché simple en memoria para resultados de QR online
 _qr_cache: Dict[str, Optional[bool]] = {}
@@ -85,43 +94,196 @@ def _extract_first(text: str, patterns: list[str], flags: int = 0) -> Optional[s
     return None
 
 
+# ---------------------------------------------------------------------------
+# Structured output schema para Groq / instructor
+# ---------------------------------------------------------------------------
+
+class _CSFExtracted(BaseModel):
+    rfc: Optional[str] = Field(None, description="RFC del contribuyente, ej. XAXX010101000")
+    razon_social: Optional[str] = Field(None, description="Nombre completo o razón social del contribuyente")
+    regimen: Optional[str] = Field(None, description="Régimen fiscal principal, ej. Régimen Simplificado de Confianza")
+    cp: Optional[str] = Field(None, description="Código postal del domicilio fiscal, 5 dígitos")
+    curp: Optional[str] = Field(None, description="CURP de 18 caracteres si aplica, o null")
+    id_cif: Optional[str] = Field(None, description="Número idCIF de la constancia")
+    qr_text: Optional[str] = Field(None, description="URL completa del QR de verificación del SAT")
+
+
+_groq_client = None
+
+
+def _get_groq_client():
+    """Inicializa el cliente instructor+groq de forma lazy."""
+    global _groq_client
+    if _groq_client is not None:
+        return _groq_client
+    if not settings.GROQ_API_KEY:
+        return None
+    try:
+        import instructor
+        from groq import Groq
+        _groq_client = instructor.from_groq(Groq(api_key=settings.GROQ_API_KEY))
+        return _groq_client
+    except Exception as exc:
+        logger.warning("No se pudo inicializar cliente Groq: %s", exc)
+        return None
+
+
+def _parse_csf_via_groq(text: str) -> Optional[_CSFExtracted]:
+    """Llama a Groq con structured output para extraer campos de la CSF."""
+    client = _get_groq_client()
+    if client is None:
+        return None
+    # Limitar texto a ~3000 chars para reducir tokens
+    snippet = text[:3000]
+    try:
+        result = client.chat.completions.create(
+            model=settings.GROQ_MODEL,
+            response_model=_CSFExtracted,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Eres un extractor de datos fiscales mexicanos. "
+                        "Del texto de una Constancia de Situación Fiscal del SAT, "
+                        "extrae los campos solicitados con exactitud. "
+                        "Devuelve null en campos que no encuentres. "
+                        "No inventes datos."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Extrae los datos fiscales del siguiente texto:\n\n{snippet}",
+                },
+            ],
+            max_tokens=512,
+        )
+        return result
+    except Exception as exc:
+        logger.warning("Groq fallback falló: %s", exc)
+        return None
+
+
+def _split_sections(text: str) -> Dict[str, str]:
+    """
+    Segmenta el texto del CSF en secciones nominadas.
+    Las secciones del SAT son fijas: encabezado, datos del contribuyente,
+    domicilio fiscal y regímenes.
+    """
+    section_markers = [
+        ("contribuyente", r"Datos del Contribuyente|Información del Contribuyente"),
+        ("domicilio", r"Domicilio Fiscal|Domicilio"),
+        ("regimenes", r"Regímenes|Régimen Fiscal"),
+        ("actividades", r"Actividades Económicas|Actividad Económica"),
+    ]
+    sections: Dict[str, str] = {"header": text}
+    remaining = text
+    for name, pattern in section_markers:
+        match = re.search(pattern, remaining, re.IGNORECASE)
+        if match:
+            sections["header"] = remaining[: match.start()]
+            remaining = remaining[match.start():]
+            sections[name] = remaining
+    return sections
+
+
 def _parse_csf_fields(text: str) -> Dict[str, Any]:
-    """Extrae campos clave de la CSF a partir del texto del PDF."""
+    """
+    Extrae campos clave de la CSF.
+
+    Estrategia híbrida:
+    1. Fast path: regex segmentado por secciones del documento SAT.
+    2. Fallback:  Groq LLM con structured output cuando faltan RFC o razón social.
+    """
     flat_text = _normalize_whitespace(text)
     upper_text = flat_text.upper()
 
     if "CONSTANCIA DE SITUACIÓN FISCAL" not in upper_text and "CONSTANCIA DE SITUACION FISCAL" not in upper_text:
         raise ValueError("El PDF no parece ser una constancia de situación fiscal del SAT.")
 
+    sections = _split_sections(flat_text)
+    contrib_text = sections.get("contribuyente", flat_text)
+    domicilio_text = sections.get("domicilio", flat_text)
+    regimenes_text = sections.get("regimenes", flat_text)
+
+    # --- RFC ---
     rfc = _extract_first(
-        flat_text,
+        contrib_text,
         [
             r"\bRFC[:\s]*([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b",
             r"Registro Federal de Contribuyentes\s*([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b",
         ],
         re.IGNORECASE,
     )
+    if not rfc:
+        rfc = _extract_first(flat_text, [r"\b([A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3})\b"], re.IGNORECASE)
+
+    # --- Razón social ---
     razon_social = _extract_first(
-        text,
+        contrib_text,
         [
-            r"Registro Federal de Contribuyentes\s*([A-Z0-9Ñ&.,()\-\s]+?)\s*Nombre,\s*denominación o razón\s*social",
-            r"Denominación/Razón Social:\s*([A-Z0-9Ñ&.,()\-\s]+?)\s*(?:Régimen Capital:|NombreComercial:|Nombre Comercial:|Fechainiciodeoperaciones:)",
+            r"Nombre,\s*denominación o razón social\s*([A-Z0-9Ñ&.,() \-]+?)(?=\s{2,}|\n|CURP|RFC)",
+            r"Denominación/Razón Social:\s*([A-Z0-9Ñ&.,() \-]+?)(?=\s{2,}|\n|Régimen|Nombre Comercial)",
+            r"Registro Federal de Contribuyentes\s*[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}\s+([A-Z0-9Ñ&.,() \-]+?)\s+Nombre,",
         ],
         re.IGNORECASE | re.DOTALL,
     )
+
+    # --- Régimen fiscal (en sección de regímenes) ---
     regimen = _extract_first(
-        flat_text,
+        regimenes_text,
         [
-            r"Regímenes:\s*Régimen Fecha Inicio Fecha Fin\s*([A-ZÁÉÍÓÚÑa-z0-9\s]+?)\s+\d{2}/\d{2}/\d{4}",
-            r"Régimen:\s*([A-ZÁÉÍÓÚÑa-z0-9\s]+?)\s*(?:CódigoPostal:|CURP:|NombreComercial:)",
+            r"(?:Régimen|Regimen)[:\s]*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9 ,]+?)\s+\d{2}/\d{2}/\d{4}",
+            r"Régimen:\s*([A-ZÁÉÍÓÚÑa-záéíóúñ0-9 ,]+?)(?:\s{2,}|\n|Fecha)",
         ],
         re.IGNORECASE,
     )
-    cp = _extract_first(flat_text, [r"Código\s*Postal[:\s]*(\d{5})", r"CódigoPostal[:\s]*(\d{5})"], re.IGNORECASE)
-    curp = _extract_first(flat_text, [r"CURP[:\s]*([A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]{2})"], re.IGNORECASE)
+    if not regimen:
+        regimen = _extract_first(
+            flat_text,
+            [r"Régimen Simplificado de Confianza|Régimen de Sueldos y Salarios|Régimen de Actividades Empresariales"],
+                # Limpiar prefijo "Fecha Inicio Fecha Fin" que aparece en algunas versiones del SAT
+                if regimen:
+                    regimen = re.sub(r"^(?:Fecha\s+Inicio\s+Fecha\s+Fin\s*)+", "", regimen, flags=re.IGNORECASE).strip()
+            re.IGNORECASE,
+        )
+
+    # --- Código Postal (en sección domicilio) ---
+    cp = _extract_first(
+        domicilio_text,
+        [r"Código\s*Postal[:\s]*(\d{5})", r"CódigoPostal[:\s]*(\d{5})", r"\b(\d{5})\b"],
+        re.IGNORECASE,
+    )
+
+    # --- CURP ---
+    curp = _extract_first(
+        contrib_text,
+        [r"CURP[:\s]*([A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]{2})"],
+        re.IGNORECASE,
+    )
+    if not curp:
+        curp = _extract_first(flat_text, [r"\b([A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]{2})\b"])
+
+    # --- idCIF ---
     id_cif = _extract_first(flat_text, [r"idCIF[:\s]*(\d+)"], re.IGNORECASE)
 
-    qr_text = _extract_first(flat_text, [r"(https?://[^\s]+(?:verificacion|validador)[^\s]*)"], re.IGNORECASE)
+    # --- QR en texto ---
+    qr_text = _extract_first(flat_text, [r"(https?://[^\s]+(?:verificacion|validador|qr)[^\s]*)"], re.IGNORECASE)
+
+    # ---------------------------------------------------------------------------
+    # Fallback Groq: si faltan campos críticos y el parser está habilitado
+    # ---------------------------------------------------------------------------
+    missing_critical = not rfc or rfc == "DESCONOCIDO" or not razon_social
+    if missing_critical and settings.GROQ_PARSER_ENABLED:
+        logger.info("Parser regex incompleto (rfc=%s, razon_social=%s). Usando Groq fallback.", rfc, razon_social)
+        groq_result = _parse_csf_via_groq(text)
+        if groq_result:
+            rfc = rfc or groq_result.rfc
+            razon_social = razon_social or groq_result.razon_social
+            regimen = regimen or groq_result.regimen
+            cp = cp or groq_result.cp
+            curp = curp or groq_result.curp
+            id_cif = id_cif or groq_result.id_cif
+            qr_text = qr_text or groq_result.qr_text
 
     return {
         "rfc": rfc or "DESCONOCIDO",

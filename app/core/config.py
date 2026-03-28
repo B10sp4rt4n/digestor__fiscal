@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     ALERTS_AUTOPOLL: bool = False
     ALERTS_AUTOPOLL_SECONDS: int = 60
 
+    # Groq AI (parser fallback)
+    GROQ_API_KEY: Optional[str] = None
+    GROQ_MODEL: str = "llama-3.1-8b-instant"
+    GROQ_PARSER_ENABLED: bool = True
+
     # Versión
     SERVICE_VERSION: str = "0.1.0"
 

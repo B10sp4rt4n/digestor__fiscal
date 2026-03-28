@@ -84,8 +84,11 @@ make run
 ## Dashboard (Streamlit)
 ```bash
 # Usa la misma DB_URL del .env
-streamlit run streamlit_app.py
+streamlit run upload_ui.py
 ```
+
+El dashboard ya está integrado en la misma UI de carga e historial.
+Si prefieres mantener el comando anterior, `streamlit run streamlit_app.py` sigue funcionando como alias.
 
 
 ### Validación online del QR del SAT

@@ -21,6 +21,8 @@ class CSF(Base):
     qr_text = Column(String, nullable=True)
     qr_valid = Column(Boolean, nullable=True)
     qr_online = Column(Boolean, nullable=True)
+    processing_status = Column(String, nullable=False, default="processed", server_default="processed")
+    status_reason = Column(Text, nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     issued_at = Column(DateTime, default=datetime.utcnow)
     csf_hash = Column(String, unique=True, nullable=False)

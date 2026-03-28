@@ -11,7 +11,6 @@ import app.models.sucursal  # noqa: F401
 import app.models.usuario   # noqa: F401
 import app.models.evento    # noqa: F401
 
-from app.models.csf import CSF
 from app.models.sucursal import Sucursal
 from app.models.usuario import Usuario
 from app.models.evento import EventoFacturacion
@@ -23,20 +22,6 @@ def seed():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try:
-        csf = CSF(
-            id=str(uuid.uuid4()),
-            company_id="demo-company",
-            rfc="XAXX010101000",
-            razon_social="Empresa Demo S.A. de C.V.",
-            regimen="General de Ley Personas Morales",
-            cp="01000",
-            curp=None,
-            issued_at=datetime.utcnow(),
-            csf_hash="hash-demo-csf",
-            version=1,
-        )
-        db.merge(csf)
-
         suc = Sucursal(
             id=str(uuid.uuid4()),
             company_id="demo-company",
@@ -56,12 +41,10 @@ def seed():
         )
         db.merge(usr)
 
-        db.flush()
-
         evt = EventoFacturacion(
             id=str(uuid.uuid4()),
             company_id="demo-company",
-            csf_id=csf.id,
+            csf_id=None,
             sucursal_id=suc.id,
             usuario_id=usr.id,
             subtotal=100.0,

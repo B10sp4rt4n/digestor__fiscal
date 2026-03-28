@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.auth import SecurityContext, enforce_tenant_scope, role_guard
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.csf import CSF
@@ -18,6 +19,16 @@ from app.services import ingest
 from app.services import telemetry
 
 router = APIRouter(prefix="/upload", tags=["upload"])
+
+
+def _compute_processing_status(qr_valid: bool | None, source_filename: str | None) -> tuple[str, str | None]:
+    if qr_valid is True:
+        return "processed", None
+    if qr_valid is False:
+        return "needs_review", "qr_invalid"
+    if source_filename:
+        return "pending_qr", "qr_not_detected"
+    return "incomplete", "missing_source_file"
 
 
 def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
@@ -58,10 +69,22 @@ def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
         if data.get("qr_online") is not None and existing.qr_online != data["qr_online"]:
             existing.qr_online = data["qr_online"]
             updated = True
+        status, reason = _compute_processing_status(existing.qr_valid, existing.source_filename)
+        if not updated:
+            status = "duplicate"
+            reason = "same_hash"
+        if existing.processing_status != status:
+            existing.processing_status = status
+            updated = True
+        if existing.status_reason != reason:
+            existing.status_reason = reason
+            updated = True
         if updated:
             db.commit()
             db.refresh(existing)
         return existing, False
+
+    status, reason = _compute_processing_status(data.get("qr_valid"), data.get("source_filename"))
 
     csf = CSF(
         id=str(uuid.uuid4()),
@@ -77,6 +100,8 @@ def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
         qr_text=data.get("qr_text"),
         qr_valid=data.get("qr_valid"),
         qr_online=data.get("qr_online"),
+        processing_status=status,
+        status_reason=reason,
         csf_hash=data["csf_hash"],
         version=1,
     )
@@ -97,10 +122,11 @@ async def upload_pdf(
     company_id: str = Form(default=None),
     qr_text: str = Form(default=None),
     validate_online: bool = Form(default=False),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
     t0 = time.monotonic()
-    cid = company_id or settings.TENANT_ID
+    cid = enforce_tenant_scope(ctx, company_id)
     content = await file.read()
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -137,6 +163,8 @@ async def upload_pdf(
         extracted_text_preview=(data.get("extracted_text") or "")[:600],
         qr_valid=data.get("qr_valid"),
         qr_online=data.get("qr_online"),
+        processing_status=csf.processing_status,
+        status_reason=csf.status_reason,
         skipped=not created,
         reason="duplicate" if not created else None,
     )
@@ -147,10 +175,11 @@ async def upload_zip(
     file: UploadFile = File(...),
     company_id: str = Form(default=None),
     validate_online: bool = Form(default=False),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
     t0 = time.monotonic()
-    cid = company_id or settings.TENANT_ID
+    cid = enforce_tenant_scope(ctx, company_id)
     content = await file.read()
 
     if not file.filename or not file.filename.lower().endswith(".zip"):
@@ -187,6 +216,8 @@ async def upload_zip(
             extracted_text_preview=(item.get("extracted_text") or "")[:600],
             qr_valid=item.get("qr_valid"),
             qr_online=item.get("qr_online"),
+            processing_status=csf.processing_status,
+            status_reason=csf.status_reason,
             skipped=not created,
             reason="duplicate" if not created else None,
         ))

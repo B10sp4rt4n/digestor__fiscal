@@ -18,6 +18,8 @@ class CSFSummary(CSFBase):
     id: str
     csf_hash: str
     version: int
+    processing_status: str = "processed"
+    status_reason: Optional[str] = None
     uploaded_at: Optional[datetime] = None
     issued_at: Optional[datetime] = None
     qr_valid: Optional[bool] = None
@@ -43,6 +45,27 @@ class CSFListResponse(BaseModel):
     total: int
 
 
+class CSFRegimenMetric(BaseModel):
+    regimen: str
+    total: int
+
+
+class CSFStatusMetric(BaseModel):
+    status: str
+    total: int
+
+
+class CSFDashboardMetrics(BaseModel):
+    total_csf: int
+    qr_valid_count: int
+    qr_invalid_count: int
+    qr_pending_count: int
+    with_source_file_count: int
+    status_breakdown: list[CSFStatusMetric]
+    recent_uploads: list[CSFSummary]
+    regimen_breakdown: list[CSFRegimenMetric]
+
+
 class UploadResult(BaseModel):
     csf_id: Optional[str] = None
     rfc: Optional[str] = None
@@ -58,6 +81,8 @@ class UploadResult(BaseModel):
     extracted_text_preview: Optional[str] = None
     qr_valid: Optional[bool] = None
     qr_online: Optional[bool] = None
+    processing_status: Optional[str] = None
+    status_reason: Optional[str] = None
     skipped: bool = False
     reason: Optional[str] = None
 

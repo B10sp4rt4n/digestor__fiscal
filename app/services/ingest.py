@@ -7,6 +7,7 @@ import io
 import os
 import re
 import ssl
+import time
 import zipfile
 from typing import Any, Dict, Optional
 
@@ -252,7 +253,15 @@ def save_upload(content: bytes, filename: str) -> str:
     """Guarda el archivo en UPLOAD_DIR y retorna la ruta."""
     upload_dir = settings.UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
-    dest = os.path.join(upload_dir, filename)
+
+    # Sanitiza nombre para evitar path traversal y caracteres peligrosos.
+    safe_name = os.path.basename(filename or "upload.pdf")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", safe_name)
+    if not safe_name:
+        safe_name = "upload.pdf"
+    safe_name = f"{int(time.time())}_{safe_name}"
+
+    dest = os.path.join(upload_dir, safe_name)
     with open(dest, "wb") as f:
         f.write(content)
     return dest

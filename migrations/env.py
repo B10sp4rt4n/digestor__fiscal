@@ -15,6 +15,7 @@ import app.models.csf       # noqa
 import app.models.sucursal  # noqa
 import app.models.usuario   # noqa
 import app.models.evento    # noqa
+import app.models.user      # noqa
 
 config = context.config
 

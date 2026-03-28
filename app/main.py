@@ -16,8 +16,10 @@ import app.models.csf       # noqa: F401
 import app.models.sucursal  # noqa: F401
 import app.models.usuario   # noqa: F401
 import app.models.evento    # noqa: F401
+import app.models.user      # noqa: F401
 
 from app.api.routers import csf, health, upload, sync, telemetry as telemetry_router
+from app.api.routers import auth_router
 from app.services import telemetry
 
 
@@ -30,10 +32,34 @@ async def _autopoll_loop():
             telemetry.notify_alerts(active)
 
 
+def _seed_initial_admin() -> None:
+    """Crea el primer usuario admin si no existe ningún usuario en BD."""
+    from app.db.session import SessionLocal
+    from app.services.user_service import create_user, get_user_by_username
+    from app.models.user import User
+
+    db = SessionLocal()
+    try:
+        total = db.query(User).count()
+        if total == 0:
+            create_user(
+                db,
+                username=settings.SEED_ADMIN_USERNAME,
+                password=settings.SEED_ADMIN_PASSWORD,
+                tenant_id=settings.SEED_ADMIN_TENANT,
+                role="superadmin",
+            )
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Crear tablas en modo dev (SQLite). En producción usar Alembic.
     Base.metadata.create_all(bind=engine)
+
+    # Seed del primer usuario admin si no existe ninguno
+    _seed_initial_admin()
 
     task = None
     if settings.ALERTS_AUTOPOLL:
@@ -54,6 +80,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(auth_router.router)
 app.include_router(health.router)
 app.include_router(csf.router)
 app.include_router(upload.router)

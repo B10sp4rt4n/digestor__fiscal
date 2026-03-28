@@ -7,8 +7,27 @@ class Settings(BaseSettings):
     USE_SQLITE: bool = False
     API_KEY: str = "change-me-please"
     TENANT_ID: str = "demo-company"
+    DEFAULT_USER_ID: str = "local-user"
+    DEFAULT_USER_ROLE: str = "admin"
     SURVIVAL_ENABLED: bool = True
     UPLOAD_DIR: str = "./uploads"
+
+    # Auth / tenancy
+    AUTH_CONNECTOR: str = "jwt"  # none|header|jwt
+    AUTH_ALLOW_ANONYMOUS: bool = False
+    AUTH_HEADER_TENANT: str = "X-Tenant-Id"
+    AUTH_HEADER_USER: str = "X-User-Id"
+    AUTH_HEADER_ROLE: str = "X-User-Role"
+
+    # JWT
+    JWT_SECRET_KEY: str = "cambia-esto-en-produccion-con-secreto-largo"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_MINUTES: int = 480  # 8 horas
+
+    # Seed admin inicial (solo si no existe ningún usuario en BD)
+    SEED_ADMIN_USERNAME: str = "admin"
+    SEED_ADMIN_PASSWORD: str = "admin1234"
+    SEED_ADMIN_TENANT: str = "demo-company"
 
     # SAT QR validation
     SAT_ONLINE_VALIDATION: bool = False

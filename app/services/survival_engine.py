@@ -86,9 +86,16 @@ def sync_batch(db: Session, events: List[Dict[str, Any]]) -> Dict[str, int]:
     return {"inserted": inserted, "skipped": skipped, "errors": errors}
 
 
-def get_changes(db: Session, since: Optional[str], limit: int = 200) -> List[Dict[str, Any]]:
+def get_changes(
+    db: Session,
+    since: Optional[str],
+    limit: int = 200,
+    company_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Devuelve eventos modificados desde `since` (ISO datetime)."""
     query = db.query(EventoFacturacion)
+    if company_id:
+        query = query.filter(EventoFacturacion.company_id == company_id)
     if since:
         try:
             since_dt = datetime.fromisoformat(since)

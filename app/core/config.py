@@ -51,6 +51,20 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = None
     GROQ_MODEL: str = "llama-3.1-8b-instant"
     GROQ_PARSER_ENABLED: bool = True
+    AI_FIELD_CORRECTION_ENABLED: bool = True
+
+    # Geolocalización por código postal (MX)
+    GEO_CP_ENABLED: bool = True
+    GEO_CP_TIMEOUT: int = 6
+    GEO_ADDRESS_ENABLED: bool = True
+    GEO_ADDRESS_TIMEOUT: int = 12
+    GEO_USER_AGENT: str = "digestor-fiscal/0.1"
+
+    # OpenCage Geocoding (freemium)
+    GEO_OPENCAGE_ENABLED: bool = True
+    GEO_OPENCAGE_TIMEOUT: int = 10
+    GEO_OPENCAGE_BASE_URL: str = "https://api.opencagedata.com/geocode/v1/json"
+    GEO_OPENCAGE_API_KEY: Optional[str] = None
 
     # Versión
     SERVICE_VERSION: str = "0.1.0"

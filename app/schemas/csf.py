@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel
 
 
@@ -18,6 +18,7 @@ class CSFSummary(CSFBase):
     id: str
     csf_hash: str
     version: int
+    parser_source: str = "regex"
     processing_status: str = "processed"
     status_reason: Optional[str] = None
     uploaded_at: Optional[datetime] = None
@@ -36,6 +37,9 @@ class CSFCreate(CSFBase):
 class CSFOut(CSFSummary):
     qr_text: Optional[str] = None
     extracted_text: Optional[str] = None
+    crm_autofill: Optional[dict[str, str]] = None
+    geolocation: Optional[dict[str, Any]] = None
+    ai_field_corrections: Optional[list[dict[str, Any]]] = None
 
     model_config = {"from_attributes": True}
 
@@ -81,6 +85,10 @@ class UploadResult(BaseModel):
     extracted_text_preview: Optional[str] = None
     qr_valid: Optional[bool] = None
     qr_online: Optional[bool] = None
+    parser_source: Optional[str] = None
+    crm_autofill: Optional[dict[str, str]] = None
+    geolocation: Optional[dict[str, Any]] = None
+    ai_field_corrections: Optional[list[dict[str, Any]]] = None
     processing_status: Optional[str] = None
     status_reason: Optional[str] = None
     skipped: bool = False

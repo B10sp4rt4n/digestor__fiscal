@@ -102,6 +102,8 @@ def csf_dashboard(
 @router.get("/{csf_id}", response_model=CSFOut)
 def get_csf(
     csf_id: str,
+    include_geo: bool = Query(default=False),
+    include_ai_corrections: bool = Query(default=False),
     ctx: SecurityContext = Depends(role_guard("viewer", "operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
@@ -110,7 +112,46 @@ def get_csf(
         raise HTTPException(status_code=404, detail="CSF no encontrada.")
     if not can_access_tenant(ctx, row.company_id):
         raise HTTPException(status_code=403, detail="No puedes acceder a otro tenant.")
-    return row
+
+    data = CSFOut.model_validate(row).model_dump()
+    data["crm_autofill"] = None
+    data["geolocation"] = None
+    data["ai_field_corrections"] = []
+
+    if include_geo or include_ai_corrections:
+        parsed_pairs = ingest._extract_colon_pairs(row.extracted_text or "")
+        field_map = {
+            "rfc": row.rfc,
+            "razon_social": row.razon_social,
+            "regimen": row.regimen,
+            "cp": row.cp,
+            "curp": row.curp,
+            "id_cif": row.id_cif,
+            "qr_text": row.qr_text,
+        }
+        crm = ingest._build_crm_autofill(field_map, parsed_pairs)
+        geo = None
+
+        if include_geo:
+            geo = ingest._resolve_geolocation(row.cp, crm)
+            if geo:
+                if geo.get("latitude") is not None:
+                    crm.setdefault("geo_latitude", str(geo["latitude"]))
+                if geo.get("longitude") is not None:
+                    crm.setdefault("geo_longitude", str(geo["longitude"]))
+                if geo.get("city"):
+                    crm.setdefault("geo_city", geo["city"])
+                if geo.get("state"):
+                    crm.setdefault("geo_state", geo["state"])
+
+        data["crm_autofill"] = crm or None
+        data["geolocation"] = geo
+        if include_ai_corrections and crm:
+            data["ai_field_corrections"] = ingest._suggest_field_corrections_via_groq(
+                crm,
+                row.extracted_text or "",
+            )
+    return data
 
 
 @router.post("/{csf_id}/revalidate", response_model=RevalidateQRResult)

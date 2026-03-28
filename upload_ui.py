@@ -3,6 +3,7 @@ import requests
 import streamlit as st
 
 from streamlit_cookies_controller import CookieController
+from app.services.ingest import format_extracted_csf_text
 
 st.set_page_config(page_title="Digestor Fiscal", layout="wide")
 
@@ -54,6 +55,7 @@ def _set_session(token: str, user: dict) -> None:
 def _clear_session() -> None:
     for k in ("token", "username", "role", "tenant_id"):
         st.session_state.pop(k, None)
+    st.session_state.pop("detail_enriched", None)
     ctrl.remove(_COOKIE)
 
 
@@ -87,6 +89,15 @@ def describe_csf_status(item: dict) -> str:
     if reason:
         return f"{base} ({reason})"
     return base
+
+
+def describe_parser_source(item: dict) -> str:
+    source = item.get("parser_source")
+    labels = {
+        "regex": "Regex",
+        "hybrid_groq": "Hibrido + Groq",
+    }
+    return labels.get(source, source or "No informado")
 
 
 # ─────────────────────────────────────────
@@ -133,6 +144,9 @@ if "token" not in st.session_state:
     _login_screen()
     st.stop()
 
+if "detail_enriched" not in st.session_state:
+    st.session_state["detail_enriched"] = {}
+
 
 # ─────────────────────────────────────────
 #  APP PRINCIPAL (usuario autenticado)
@@ -165,6 +179,24 @@ def build_csf_paraphrase(data: dict) -> str:
         f"El idCIF identificado es {id_cif}. "
         f"La validación local del QR es {qr_estado} y la verificación online fue {qr_online_txt}."
     )
+
+
+def build_parsed_text(data: dict) -> str:
+    extracted_text = data.get("extracted_text") or data.get("extracted_text_preview") or ""
+    parsed = format_extracted_csf_text(extracted_text)
+    if parsed:
+        return parsed
+    lines = [
+        f"RFC: {data.get('rfc') or 'No identificado'}",
+        f"Razon social: {data.get('razon_social') or 'No identificada'}",
+        f"Regimen: {data.get('regimen') or 'No identificado'}",
+        f"Codigo postal: {data.get('cp') or 'No identificado'}",
+        f"CURP: {data.get('curp') or 'No identificada'}",
+        f"idCIF: {data.get('id_cif') or 'No identificado'}",
+        f"QR: {data.get('qr_text') or 'No detectado'}",
+        f"Metodo de extraccion: {describe_parser_source(data)}",
+    ]
+    return "\n".join(lines)
 
 with st.sidebar:
     st.header("Sesión")
@@ -221,15 +253,47 @@ with tab_upload:
                 top_left.metric("RFC", data.get("rfc", "—"))
                 top_right.metric("CP", data.get("cp", "—"))
                 top_extra.metric("QR formato", "Válido" if data.get("qr_valid") else "No detectado")
+                parser_left, parser_right = st.columns([2, 3])
+                parser_left.metric("Metodo de extraccion", describe_parser_source(data))
+                if data.get("parser_source") == "hybrid_groq":
+                    parser_right.success("Se uso fallback con Groq para completar la extraccion")
+                else:
+                    parser_right.info("Se resolvio con regex; Groq queda disponible como fallback")
 
                 st.info(build_csf_paraphrase(data))
 
                 st.markdown(f"**Razón social:** {data.get('razon_social', '—')}")
                 st.markdown(f"**Régimen:** {data.get('regimen', '—')}")
+                st.markdown(f"**Parser usado:** {describe_parser_source(data)}")
                 st.markdown(f"**idCIF:** {data.get('id_cif', '—')}")
                 st.markdown(f"**QR:** {data.get('qr_text', '—')}")
                 st.markdown(f"**QR online:** {data.get('qr_online', '—')}")
                 st.markdown(f"**Hash:** {data.get('csf_hash', '—')}")
+                geolocation = data.get("geolocation")
+                if geolocation and geolocation.get("source") != "inegi_oficial":
+                    geolocation = None
+                if geolocation:
+                    st.markdown(
+                        f"**Geolocalización:** {geolocation.get('city') or '—'}, "
+                        f"{geolocation.get('state') or '—'} "
+                        f"({geolocation.get('latitude')}, {geolocation.get('longitude')})"
+                    )
+                    st.caption(
+                        f"Fuente: {geolocation.get('source') or '—'} | "
+                        f"Confianza: {geolocation.get('confidence', '—')}"
+                    )
+                    lat = geolocation.get("latitude")
+                    lon = geolocation.get("longitude")
+                    if lat is not None and lon is not None:
+                        st.map(pd.DataFrame([{"lat": lat, "lon": lon}]), zoom=10)
+                if data.get("crm_autofill"):
+                    with st.expander("Autollenado CRM", expanded=True):
+                        st.json(data.get("crm_autofill"))
+                if data.get("ai_field_corrections"):
+                    with st.expander("Corrector IA por campo", expanded=True):
+                        st.dataframe(pd.DataFrame(data.get("ai_field_corrections")), width="stretch", hide_index=True)
+                with st.expander("Texto parseado"):
+                    st.text(build_parsed_text(data))
                 if data.get("extracted_text_preview"):
                     with st.expander("Texto extraído (preview)"):
                         st.text(data.get("extracted_text_preview"))
@@ -257,9 +321,11 @@ with tab_history:
             if items:
                 frame = pd.DataFrame(items)
                 frame["estado"] = frame.apply(describe_csf_status, axis=1)
+                frame["parser"] = frame.apply(describe_parser_source, axis=1)
                 display_columns = [
                     "uploaded_at",
                     "source_filename",
+                    "parser",
                     "processing_status",
                     "estado",
                     "rfc",
@@ -279,16 +345,32 @@ with tab_history:
                 selected_label = st.selectbox("Selecciona una constancia para revalidar QR", list(options.keys()))
                 selected_id = options[selected_label]
 
-                detail_resp = requests.get(f"{API}/csf/{selected_id}", headers=auth_headers(), timeout=15)
+                detail_resp = requests.get(
+                    f"{API}/csf/{selected_id}",
+                    params={"include_geo": "false", "include_ai_corrections": "false"},
+                    headers=auth_headers(),
+                    timeout=15,
+                )
                 if detail_resp.status_code == 200:
                     detail = detail_resp.json()
+                    cached = st.session_state["detail_enriched"].get(selected_id)
+                    if cached and cached.get("geolocation"):
+                        cached_source = (cached.get("geolocation") or {}).get("source")
+                        # Limpia caché legado si la fuente ya no es válida (opencage fue proveedor anterior).
+                        if cached_source != "inegi_oficial":
+                            st.session_state["detail_enriched"].pop(selected_id, None)
+                            cached = None
+                    if cached:
+                        detail.update(cached)
                     with st.expander("Detalle de constancia seleccionada", expanded=True):
                         st.info(build_csf_paraphrase(detail))
                         st.caption(f"Estado: {describe_csf_status(detail)}")
+                        st.caption(f"Metodo de extraccion: {describe_parser_source(detail)}")
                         left, right = st.columns(2)
                         left.markdown(f"**RFC:** {detail.get('rfc') or '—'}")
                         left.markdown(f"**Razón social:** {detail.get('razon_social') or '—'}")
                         left.markdown(f"**Régimen:** {detail.get('regimen') or '—'}")
+                        left.markdown(f"**Parser usado:** {describe_parser_source(detail)}")
                         left.markdown(f"**CP:** {detail.get('cp') or '—'}")
                         left.markdown(f"**Archivo:** {detail.get('source_filename') or '—'}")
                         right.markdown(f"**QR válido:** {detail.get('qr_valid')}")
@@ -298,6 +380,106 @@ with tab_history:
                         right.markdown(f"**Hash:** {detail.get('csf_hash') or '—'}")
                         right.markdown(f"**Status persistido:** {detail.get('processing_status') or '—'}")
                         st.markdown(f"**QR text:** {detail.get('qr_text') or '—'}")
+                        geo_col, refresh_col, ia_col = st.columns(3)
+                        if geo_col.button("Cargar geolocalización", key=f"geo_{selected_id}", width="stretch"):
+                            with st.spinner("Consultando geolocalización..."):
+                                try:
+                                    geo_resp = requests.get(
+                                        f"{API}/csf/{selected_id}",
+                                        params={"include_geo": "true", "include_ai_corrections": "false"},
+                                        headers=auth_headers(),
+                                        timeout=25,
+                                    )
+                                    if geo_resp.status_code == 200:
+                                        enriched = st.session_state["detail_enriched"].get(selected_id, {})
+                                        payload = geo_resp.json()
+                                        enriched["geolocation"] = payload.get("geolocation")
+                                        if payload.get("crm_autofill"):
+                                            enriched["crm_autofill"] = payload.get("crm_autofill")
+                                        st.session_state["detail_enriched"][selected_id] = enriched
+                                        st.rerun()
+                                    else:
+                                        st.warning(f"No se pudo cargar geolocalización: {geo_resp.text}")
+                                except requests.ReadTimeout:
+                                    st.warning("La geolocalización tardó demasiado. Intenta nuevamente.")
+                                except requests.RequestException as exc:
+                                    st.warning(f"Error al cargar geolocalización: {exc}")
+
+                        if refresh_col.button("Forzar refresco geo", key=f"force_geo_{selected_id}", width="stretch"):
+                            with st.spinner("Forzando refresco de geolocalización..."):
+                                st.session_state["detail_enriched"].pop(selected_id, None)
+                                try:
+                                    geo_resp = requests.get(
+                                        f"{API}/csf/{selected_id}",
+                                        params={"include_geo": "true", "include_ai_corrections": "false"},
+                                        headers=auth_headers(),
+                                        timeout=25,
+                                    )
+                                    if geo_resp.status_code == 200:
+                                        payload = geo_resp.json()
+                                        enriched = {
+                                            "geolocation": payload.get("geolocation"),
+                                        }
+                                        if payload.get("crm_autofill"):
+                                            enriched["crm_autofill"] = payload.get("crm_autofill")
+                                        st.session_state["detail_enriched"][selected_id] = enriched
+                                        st.rerun()
+                                    else:
+                                        st.warning(f"No se pudo forzar geolocalización: {geo_resp.text}")
+                                except requests.ReadTimeout:
+                                    st.warning("El refresco de geolocalización tardó demasiado. Intenta nuevamente.")
+                                except requests.RequestException as exc:
+                                    st.warning(f"Error al forzar geolocalización: {exc}")
+
+                        if ia_col.button("Cargar corrector IA", key=f"ia_{selected_id}", width="stretch"):
+                            with st.spinner("Consultando corrector IA..."):
+                                try:
+                                    ia_resp = requests.get(
+                                        f"{API}/csf/{selected_id}",
+                                        params={"include_geo": "false", "include_ai_corrections": "true"},
+                                        headers=auth_headers(),
+                                        timeout=120,
+                                    )
+                                    if ia_resp.status_code == 200:
+                                        enriched = st.session_state["detail_enriched"].get(selected_id, {})
+                                        payload = ia_resp.json()
+                                        enriched["ai_field_corrections"] = payload.get("ai_field_corrections")
+                                        if payload.get("crm_autofill"):
+                                            enriched["crm_autofill"] = payload.get("crm_autofill")
+                                        st.session_state["detail_enriched"][selected_id] = enriched
+                                        st.rerun()
+                                    else:
+                                        st.warning(f"No se pudo cargar corrector IA: {ia_resp.text}")
+                                except requests.ReadTimeout:
+                                    st.warning("El corrector IA tardó demasiado. Intenta nuevamente.")
+                                except requests.RequestException as exc:
+                                    st.warning(f"Error al cargar corrector IA: {exc}")
+
+                        geolocation = detail.get("geolocation")
+                        if geolocation and geolocation.get("source") != "inegi_oficial":
+                            geolocation = None
+                        if geolocation:
+                            st.markdown(
+                                f"**Geolocalización:** {geolocation.get('city') or '—'}, "
+                                f"{geolocation.get('state') or '—'} "
+                                f"({geolocation.get('latitude')}, {geolocation.get('longitude')})"
+                            )
+                            st.caption(
+                                f"Fuente: {geolocation.get('source') or '—'} | "
+                                f"Confianza: {geolocation.get('confidence', '—')}"
+                            )
+                            lat = geolocation.get("latitude")
+                            lon = geolocation.get("longitude")
+                            if lat is not None and lon is not None:
+                                st.map(pd.DataFrame([{"lat": lat, "lon": lon}]), zoom=10)
+                        if detail.get("crm_autofill"):
+                            with st.expander("Autollenado CRM", expanded=True):
+                                st.json(detail.get("crm_autofill"))
+                        if detail.get("ai_field_corrections"):
+                            with st.expander("Corrector IA por campo", expanded=True):
+                                st.dataframe(pd.DataFrame(detail.get("ai_field_corrections")), width="stretch", hide_index=True)
+                        with st.expander("Texto parseado", expanded=True):
+                            st.text(build_parsed_text(detail))
                         if detail.get("extracted_text"):
                             st.text_area("Texto extraído", detail.get("extracted_text"), height=280)
 

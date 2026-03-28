@@ -69,6 +69,9 @@ def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
         if data.get("qr_online") is not None and existing.qr_online != data["qr_online"]:
             existing.qr_online = data["qr_online"]
             updated = True
+        if data.get("parser_source") and existing.parser_source != data["parser_source"]:
+            existing.parser_source = data["parser_source"]
+            updated = True
         status, reason = _compute_processing_status(existing.qr_valid, existing.source_filename)
         if not updated:
             status = "duplicate"
@@ -100,6 +103,7 @@ def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
         qr_text=data.get("qr_text"),
         qr_valid=data.get("qr_valid"),
         qr_online=data.get("qr_online"),
+        parser_source=data.get("parser_source", "regex"),
         processing_status=status,
         status_reason=reason,
         csf_hash=data["csf_hash"],
@@ -163,6 +167,10 @@ async def upload_pdf(
         extracted_text_preview=(data.get("extracted_text") or "")[:600],
         qr_valid=data.get("qr_valid"),
         qr_online=data.get("qr_online"),
+        parser_source=csf.parser_source,
+        crm_autofill=data.get("crm_autofill"),
+        geolocation=data.get("geolocation"),
+        ai_field_corrections=data.get("ai_field_corrections"),
         processing_status=csf.processing_status,
         status_reason=csf.status_reason,
         skipped=not created,
@@ -216,6 +224,10 @@ async def upload_zip(
             extracted_text_preview=(item.get("extracted_text") or "")[:600],
             qr_valid=item.get("qr_valid"),
             qr_online=item.get("qr_online"),
+            parser_source=csf.parser_source,
+            crm_autofill=item.get("crm_autofill"),
+            geolocation=item.get("geolocation"),
+            ai_field_corrections=item.get("ai_field_corrections"),
             processing_status=csf.processing_status,
             status_reason=csf.status_reason,
             skipped=not created,

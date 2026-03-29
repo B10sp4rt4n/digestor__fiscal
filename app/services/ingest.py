@@ -621,6 +621,37 @@ def _suggest_field_corrections_via_groq(
         return []
 
 
+def _build_corrected_json(
+    crm_autofill: Dict[str, str],
+    ai_field_corrections: list[Dict[str, Any]],
+    min_confidence: Optional[float] = None,
+) -> Dict[str, str]:
+    """Aplica sugerencias IA de confianza suficiente sobre el payload CRM y retorna JSON corregido."""
+    corrected: Dict[str, str] = dict(crm_autofill or {})
+    if not ai_field_corrections:
+        return corrected
+
+    threshold = float(min_confidence if min_confidence is not None else settings.AI_FIELD_CORRECTION_MIN_CONFIDENCE)
+    for suggestion in ai_field_corrections:
+        if not isinstance(suggestion, dict):
+            continue
+        field = (suggestion.get("field") or "").strip()
+        suggested_value = suggestion.get("suggested_value")
+        if not field or suggested_value is None:
+            continue
+        try:
+            confidence = float(suggestion.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < threshold:
+            continue
+        value = str(suggested_value).strip()
+        if value:
+            corrected[field] = value
+
+    return corrected
+
+
 def _split_sections(text: str) -> Dict[str, str]:
     """
     Segmenta el texto del CSF en secciones nominadas.
@@ -1011,6 +1042,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
         if geolocation.get("state"):
             crm_autofill.setdefault("geo_state", geolocation["state"])
     ai_field_corrections = _suggest_field_corrections_via_groq(crm_autofill, text)
+    corrected_json = _build_corrected_json(crm_autofill, ai_field_corrections)
     csf_hash = _sha256(content)
 
     if not fields.get("qr_text"):
@@ -1038,6 +1070,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
         "crm_autofill": crm_autofill,
         "geolocation": geolocation,
         "ai_field_corrections": ai_field_corrections,
+        "corrected_json": corrected_json,
     }
 
 

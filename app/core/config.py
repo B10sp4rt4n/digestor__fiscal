@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "llama-3.1-8b-instant"
     GROQ_PARSER_ENABLED: bool = True
     AI_FIELD_CORRECTION_ENABLED: bool = True
+    AI_FIELD_CORRECTION_MIN_CONFIDENCE: float = 0.70
 
     # Geolocalización por código postal (MX)
     GEO_CP_ENABLED: bool = True

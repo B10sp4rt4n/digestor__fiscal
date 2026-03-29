@@ -40,6 +40,7 @@ class CSFOut(CSFSummary):
     crm_autofill: Optional[dict[str, str]] = None
     geolocation: Optional[dict[str, Any]] = None
     ai_field_corrections: Optional[list[dict[str, Any]]] = None
+    corrected_json: Optional[dict[str, str]] = None
 
     model_config = {"from_attributes": True}
 
@@ -89,6 +90,7 @@ class UploadResult(BaseModel):
     crm_autofill: Optional[dict[str, str]] = None
     geolocation: Optional[dict[str, Any]] = None
     ai_field_corrections: Optional[list[dict[str, Any]]] = None
+    corrected_json: Optional[dict[str, str]] = None
     processing_status: Optional[str] = None
     status_reason: Optional[str] = None
     skipped: bool = False

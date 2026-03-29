@@ -117,6 +117,7 @@ def get_csf(
     data["crm_autofill"] = None
     data["geolocation"] = None
     data["ai_field_corrections"] = []
+    data["corrected_json"] = None
 
     if include_geo or include_ai_corrections:
         parsed_pairs = ingest._extract_colon_pairs(row.extracted_text or "")
@@ -150,6 +151,10 @@ def get_csf(
             data["ai_field_corrections"] = ingest._suggest_field_corrections_via_groq(
                 crm,
                 row.extracted_text or "",
+            )
+            data["corrected_json"] = ingest._build_corrected_json(
+                crm,
+                data["ai_field_corrections"],
             )
     return data
 

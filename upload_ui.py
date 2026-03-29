@@ -292,6 +292,9 @@ with tab_upload:
                 if data.get("ai_field_corrections"):
                     with st.expander("Corrector IA por campo", expanded=True):
                         st.dataframe(pd.DataFrame(data.get("ai_field_corrections")), width="stretch", hide_index=True)
+                if data.get("corrected_json"):
+                    with st.expander("JSON corregido", expanded=True):
+                        st.json(data.get("corrected_json"))
                 with st.expander("Texto parseado"):
                     st.text(build_parsed_text(data))
                 if data.get("extracted_text_preview"):
@@ -444,6 +447,7 @@ with tab_history:
                                         enriched = st.session_state["detail_enriched"].get(selected_id, {})
                                         payload = ia_resp.json()
                                         enriched["ai_field_corrections"] = payload.get("ai_field_corrections")
+                                        enriched["corrected_json"] = payload.get("corrected_json")
                                         if payload.get("crm_autofill"):
                                             enriched["crm_autofill"] = payload.get("crm_autofill")
                                         st.session_state["detail_enriched"][selected_id] = enriched
@@ -478,6 +482,9 @@ with tab_history:
                         if detail.get("ai_field_corrections"):
                             with st.expander("Corrector IA por campo", expanded=True):
                                 st.dataframe(pd.DataFrame(detail.get("ai_field_corrections")), width="stretch", hide_index=True)
+                        if detail.get("corrected_json"):
+                            with st.expander("JSON corregido", expanded=True):
+                                st.json(detail.get("corrected_json"))
                         with st.expander("Texto parseado", expanded=True):
                             st.text(build_parsed_text(detail))
                         if detail.get("extracted_text"):

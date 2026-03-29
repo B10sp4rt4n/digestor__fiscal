@@ -12,13 +12,14 @@ from app.db.base import Base
 from app.db.session import engine
 
 # Importar modelos para que Alembic/Base los registre
-import app.models.csf       # noqa: F401
-import app.models.sucursal  # noqa: F401
-import app.models.usuario   # noqa: F401
-import app.models.evento    # noqa: F401
-import app.models.user      # noqa: F401
+import app.models.csf              # noqa: F401
+import app.models.document_job     # noqa: F401
+import app.models.sucursal         # noqa: F401
+import app.models.usuario          # noqa: F401
+import app.models.evento           # noqa: F401
+import app.models.user             # noqa: F401
 
-from app.api.routers import backups, csf, health, upload, sync, telemetry as telemetry_router
+from app.api.routers import backups, csf, documents_v1, health, metrics_v1, upload, sync, telemetry as telemetry_router
 from app.api.routers import auth_router
 from app.services import telemetry
 
@@ -84,6 +85,8 @@ app.include_router(auth_router.router)
 app.include_router(health.router)
 app.include_router(backups.router)
 app.include_router(csf.router)
+app.include_router(documents_v1.router)
+app.include_router(metrics_v1.router)
 app.include_router(upload.router)
 app.include_router(sync.router)
 app.include_router(telemetry_router.router)

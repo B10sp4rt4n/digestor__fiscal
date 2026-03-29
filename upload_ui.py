@@ -1,6 +1,7 @@
 import pandas as pd
 import requests
 import streamlit as st
+import fitz
 
 from streamlit_cookies_controller import CookieController
 from app.services.ingest import format_extracted_csf_text
@@ -72,6 +73,21 @@ def _fetch_dashboard_data(company_id: str) -> dict | None:
         return None
     except requests.RequestException:
         return None
+
+
+def _export_local_backup(company_id: str) -> dict | None:
+    try:
+        resp = requests.post(
+            f"{API}/admin/backups/export",
+            params={"company_id": company_id},
+            headers=auth_headers(),
+            timeout=120,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        return {"error": resp.text, "status_code": resp.status_code}
+    except requests.RequestException as exc:
+        return {"error": str(exc), "status_code": 0}
 
 
 def describe_csf_status(item: dict) -> str:
@@ -147,6 +163,9 @@ if "token" not in st.session_state:
 if "detail_enriched" not in st.session_state:
     st.session_state["detail_enriched"] = {}
 
+if "pdf_cache" not in st.session_state:
+    st.session_state["pdf_cache"] = {}
+
 
 # ─────────────────────────────────────────
 #  APP PRINCIPAL (usuario autenticado)
@@ -198,6 +217,69 @@ def build_parsed_text(data: dict) -> str:
     ]
     return "\n".join(lines)
 
+
+def _extract_filename_from_disposition(disposition: str | None) -> str | None:
+    if not disposition:
+        return None
+    marker = "filename="
+    idx = disposition.lower().find(marker)
+    if idx == -1:
+        return None
+    raw = disposition[idx + len(marker):].strip()
+    if raw.startswith('"') and raw.endswith('"') and len(raw) >= 2:
+        raw = raw[1:-1]
+    return raw or None
+
+
+def _fetch_pdf_bytes(csf_id: str) -> tuple[bytes | None, str | None, str | None]:
+    try:
+        resp = requests.get(
+            f"{API}/csf/{csf_id}/pdf",
+            headers=auth_headers(),
+            timeout=60,
+        )
+    except requests.ReadTimeout:
+        return None, None, "La descarga del PDF superó el tiempo de espera."
+    except requests.RequestException as exc:
+        return None, None, f"Error de red al descargar PDF: {exc}"
+
+    if resp.status_code != 200:
+        return None, None, f"No se pudo descargar PDF ({resp.status_code}): {resp.text}"
+
+    filename = _extract_filename_from_disposition(resp.headers.get("Content-Disposition"))
+    return resp.content, filename, None
+
+
+def _render_pdf_preview(pdf_bytes: bytes, key_prefix: str) -> None:
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as exc:
+        st.warning(f"No se pudo renderizar el PDF en vista previa: {exc}")
+        return
+
+    try:
+        if doc.page_count == 0:
+            st.info("El PDF no contiene páginas para previsualizar.")
+            return
+
+        page_number = st.number_input(
+            "Página",
+            min_value=1,
+            max_value=doc.page_count,
+            value=1,
+            step=1,
+            key=f"pdf_page_{key_prefix}",
+        )
+        page = doc.load_page(int(page_number) - 1)
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
+        st.image(
+            pix.tobytes("png"),
+            caption=f"Vista previa de página {page_number} de {doc.page_count}",
+            use_container_width=True,
+        )
+    finally:
+        doc.close()
+
 with st.sidebar:
     st.header("Sesión")
     st.markdown(f"**Usuario:** {st.session_state['username']}")
@@ -206,6 +288,20 @@ with st.sidebar:
     if st.button("Cerrar sesión", width="stretch"):
         _clear_session()
         st.rerun()
+    if st.session_state["role"] in {"admin", "superadmin"}:
+        if st.button("Generar respaldo local", width="stretch"):
+            with st.spinner("Exportando respaldo..."):
+                backup_result = _export_local_backup(st.session_state["tenant_id"])
+            if backup_result and not backup_result.get("error"):
+                st.session_state["last_backup"] = backup_result
+                st.success("Respaldo local generado")
+            else:
+                error_text = (backup_result or {}).get("error") or "Error desconocido"
+                st.error(f"No se pudo generar el respaldo: {error_text}")
+        last_backup = st.session_state.get("last_backup")
+        if last_backup:
+            st.caption(f"Archivo: {last_backup.get('filename')}")
+            st.caption(f"Ruta: {last_backup.get('backup_path')}")
     st.divider()
     validate_online = st.checkbox("Validar QR online contra SAT", value=False)
     st.caption("La validación online puede tardar más por red o rate limits.")
@@ -230,7 +326,7 @@ with tab_upload:
                     files={"file": (archivo.name, archivo.getvalue(), "application/pdf")},
                     data=payload,
                     headers=auth_headers(),
-                    timeout=30,
+                       timeout=120,
                 )
             else:
                 resp = requests.post(
@@ -238,7 +334,7 @@ with tab_upload:
                     files={"file": (archivo.name, archivo.getvalue(), "application/zip")},
                     data=payload,
                     headers=auth_headers(),
-                    timeout=60,
+                       timeout=120,
                 )
 
         if resp.status_code == 200:
@@ -383,6 +479,37 @@ with tab_history:
                         right.markdown(f"**Hash:** {detail.get('csf_hash') or '—'}")
                         right.markdown(f"**Status persistido:** {detail.get('processing_status') or '—'}")
                         st.markdown(f"**QR text:** {detail.get('qr_text') or '—'}")
+
+                        pdf_controls_left, pdf_controls_right = st.columns([1, 2])
+                        if pdf_controls_left.button("Cargar PDF", key=f"pdf_{selected_id}", width="stretch"):
+                            with st.spinner("Descargando PDF desde base de datos..."):
+                                pdf_bytes, pdf_filename, pdf_error = _fetch_pdf_bytes(selected_id)
+                                if pdf_error:
+                                    st.warning(pdf_error)
+                                elif pdf_bytes:
+                                    if not pdf_filename:
+                                        pdf_filename = detail.get("source_filename") or f"csf_{selected_id}.pdf"
+                                    st.session_state["pdf_cache"][selected_id] = {
+                                        "bytes": pdf_bytes,
+                                        "filename": pdf_filename,
+                                    }
+                                    st.success("PDF cargado")
+
+                        cached_pdf = st.session_state["pdf_cache"].get(selected_id)
+                        if cached_pdf and cached_pdf.get("bytes"):
+                            pdf_bytes = cached_pdf["bytes"]
+                            pdf_filename = cached_pdf.get("filename") or detail.get("source_filename") or f"csf_{selected_id}.pdf"
+                            pdf_controls_right.download_button(
+                                "Descargar PDF",
+                                data=pdf_bytes,
+                                file_name=pdf_filename,
+                                mime="application/pdf",
+                                key=f"download_pdf_{selected_id}",
+                                width="stretch",
+                            )
+                            with st.expander("Vista previa PDF", expanded=False):
+                                _render_pdf_preview(pdf_bytes, key_prefix=selected_id)
+
                         geo_col, refresh_col, ia_col = st.columns(3)
                         if geo_col.button("Cargar geolocalización", key=f"geo_{selected_id}", width="stretch"):
                             with st.spinner("Consultando geolocalización..."):

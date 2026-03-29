@@ -4,11 +4,14 @@ import sys
 from pathlib import Path
 from sqlalchemy import engine_from_config, pool
 from alembic import context
+from dotenv import load_dotenv
 
 # Importar modelos para que Alembic los detecte
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+load_dotenv(ROOT / ".env")
 
 from app.db.base import Base
 import app.models.csf       # noqa
@@ -19,8 +22,8 @@ import app.models.user      # noqa
 
 config = context.config
 
-# Leer DB_URL desde variable de entorno si está disponible
-db_url = os.getenv("DB_URL")
+# Leer DB_URL o DATABASE_URL desde variable de entorno si está disponible
+db_url = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 

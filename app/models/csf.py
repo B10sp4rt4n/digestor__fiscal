@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Boolean, Column, String, Integer, DateTime, Text
+from sqlalchemy import Boolean, Column, LargeBinary, String, Integer, DateTime, Text
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -28,5 +28,6 @@ class CSF(Base):
     issued_at = Column(DateTime, default=datetime.utcnow)
     csf_hash = Column(String, unique=True, nullable=False)
     version = Column(Integer, default=1)
+    pdf_content = Column(LargeBinary, nullable=True)
 
     eventos = relationship("EventoFacturacion", back_populates="csf")

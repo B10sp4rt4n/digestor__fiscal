@@ -1,9 +1,23 @@
 # Digestor Fiscal — CSF → Hashes → Autollenado → Telemetría
 
 Arquitectura **cloud-first** con **modo survival (offline-first)**.
-- **PostgreSQL** como fuente canónica.
+- **Neon/PostgreSQL** como fuente canónica recomendada.
 - **SQLite** local para staging/edge y modo offline.
 - API en **FastAPI** con endpoints de carga (`/upload/pdf`, `/upload/zip`), sincronización (`/sync/batch`, `/sync/changes`) y salud (`/health`).
+
+## ▶️ Ejecutar con Neon (recomendado)
+```bash
+cp .env.example .env
+# Ajusta DB_URL con tu connection string de Neon
+# Ejemplo:
+# DB_URL=postgresql+psycopg://USER:PASSWORD@EP-XXXX.us-east-1.aws.neon.tech/neondb?sslmode=require
+hypercorn app.main:app --reload --bind 0.0.0.0:8000
+```
+
+Notas:
+- Si usas Neon, deja `USE_SQLITE=0`.
+- La app fuerza `sslmode=require` cuando detecta PostgreSQL y la URL no lo trae explícito.
+- Se activa `pool_pre_ping` para reducir errores por conexiones dormidas.
 
 ## ▶️ Ejecutar en local (SQLite)
 ```bash
@@ -23,18 +37,26 @@ hypercorn app.main:app --reload --bind 0.0.0.0:8000
 ```
 
 ## Variables .env
-- `DB_URL` → conexión a BD (sqlite o postgres)
+- `DB_URL` → conexión principal a BD (sqlite o postgres)
+- `DATABASE_URL` → alias estándar de despliegue; si existe, tiene prioridad sobre `DB_URL`
 - `USE_SQLITE` → `1` para habilitar SQLite local (staging/edge)
+- `DB_SSL_REQUIRE` → exige SSL para PostgreSQL/Neon
+- `DB_POOL_PRE_PING` → valida conexiones antes de usarlas
+- `DB_POOL_RECYCLE_SECONDS` → recicla conexiones largas
 - `API_KEY` → clave HMAC para firmar eventos de survival
 - `TENANT_ID` → id de empresa (tenant) por defecto en dev
 - `SURVIVAL_ENABLED` → `1` para activar cola offline
 - `UPLOAD_DIR` → carpeta donde se guardan PDFs/ZIPs
+- `LOCAL_BACKUP_ENABLED` → habilita exportación local en JSON
+- `LOCAL_BACKUP_DIR` → carpeta donde se guardan los respaldos
+- `LOCAL_BACKUP_INCLUDE_USERS` → incluye tabla de usuarios en el respaldo
 
 ## Endpoints
 - `POST /upload/pdf` → sube 1 CSF (PDF)
 - `POST /upload/zip` → sube ZIP con múltiples CSFs
 - `POST /sync/batch` → recibe eventos/filas desde edge (idempotente)
 - `GET  /sync/changes` → devuelve cambios desde `since`
+- `POST /admin/backups/export` → genera respaldo local JSON del tenant actual
 - `GET  /health` → estado simple
 - `GET  /version` → versión del servicio
 
@@ -90,6 +112,19 @@ streamlit run upload_ui.py
 El dashboard ya está integrado en la misma UI de carga e historial.
 Si prefieres mantener el comando anterior, `streamlit run streamlit_app.py` sigue funcionando como alias.
 
+### Respaldo local en PC
+- Los usuarios con rol `admin` o `superadmin` pueden generar un respaldo desde el sidebar de Streamlit.
+- El archivo se escribe en `LOCAL_BACKUP_DIR` y contiene export JSON por tabla, filtrado por tenant.
+- Esto permite operar con Neon como base principal y mantener una copia local exportable en la PC del usuario.
+
+### psql con Neon
+Puedes validar la conexión directa con un comando como este:
+
+```bash
+psql 'postgresql://neondb_owner:TU_PASSWORD@ep-XXXX.us-east-1.aws.neon.tech/neondb?sslmode=require'
+```
+
+Si prefieres no guardar la URL en `DB_URL`, puedes exportarla como `DATABASE_URL` y la aplicación la usará igual.
 
 ### Validación online del QR del SAT
 - Activa en `.env` con `SAT_ONLINE_VALIDATION=1`.

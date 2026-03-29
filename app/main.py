@@ -18,7 +18,7 @@ import app.models.usuario   # noqa: F401
 import app.models.evento    # noqa: F401
 import app.models.user      # noqa: F401
 
-from app.api.routers import csf, health, upload, sync, telemetry as telemetry_router
+from app.api.routers import backups, csf, health, upload, sync, telemetry as telemetry_router
 from app.api.routers import auth_router
 from app.services import telemetry
 
@@ -82,6 +82,7 @@ app = FastAPI(
 
 app.include_router(auth_router.router)
 app.include_router(health.router)
+app.include_router(backups.router)
 app.include_router(csf.router)
 app.include_router(upload.router)
 app.include_router(sync.router)

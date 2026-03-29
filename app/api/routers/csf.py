@@ -4,6 +4,7 @@ Router de consulta de constancias — listado e individual.
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -56,34 +57,40 @@ def csf_dashboard(
 
     regimen_rows = (
         db.query(
-            func.coalesce(CSF.regimen, "Sin régimen identificado").label("regimen"),
+            CSF.regimen,
             func.count(CSF.id).label("total"),
         )
         .filter(CSF.company_id == tenant_id)
-        .group_by(func.coalesce(CSF.regimen, "Sin régimen identificado"))
-        .order_by(func.count(CSF.id).desc(), func.coalesce(CSF.regimen, "Sin régimen identificado"))
+        .group_by(CSF.regimen)
+        .order_by(func.count(CSF.id).desc())
         .limit(8)
         .all()
     )
 
     regimen_breakdown = [
-        CSFRegimenMetric(regimen=row.regimen, total=row.total)
+        CSFRegimenMetric(
+            regimen=row.regimen or "Sin régimen identificado",
+            total=row.total,
+        )
         for row in regimen_rows
     ]
 
     status_rows = (
         db.query(
-            func.coalesce(CSF.processing_status, "processed").label("status"),
+            CSF.processing_status,
             func.count(CSF.id).label("total"),
         )
         .filter(CSF.company_id == tenant_id)
-        .group_by(func.coalesce(CSF.processing_status, "processed"))
-        .order_by(func.count(CSF.id).desc(), func.coalesce(CSF.processing_status, "processed"))
+        .group_by(CSF.processing_status)
+        .order_by(func.count(CSF.id).desc())
         .all()
     )
 
     status_breakdown = [
-        CSFStatusMetric(status=row.status, total=row.total)
+        CSFStatusMetric(
+            status=row.processing_status or "processed",
+            total=row.total,
+        )
         for row in status_rows
     ]
 
@@ -148,7 +155,7 @@ def get_csf(
         data["crm_autofill"] = crm or None
         data["geolocation"] = geo
         if include_ai_corrections and crm:
-            data["ai_field_corrections"] = ingest._suggest_field_corrections_via_groq(
+            data["ai_field_corrections"] = ingest._suggest_field_corrections(
                 crm,
                 row.extracted_text or "",
             )
@@ -157,6 +164,29 @@ def get_csf(
                 data["ai_field_corrections"],
             )
     return data
+
+
+@router.get("/{csf_id}/pdf")
+def download_csf_pdf(
+    csf_id: str,
+    ctx: SecurityContext = Depends(role_guard("viewer", "operator", "admin", "superadmin")),
+    db: Session = Depends(get_db),
+):
+    """Descarga el PDF original almacenado en la base de datos."""
+    row = db.query(CSF).filter(CSF.id == csf_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="CSF no encontrada.")
+    if not can_access_tenant(ctx, row.company_id):
+        raise HTTPException(status_code=403, detail="No puedes acceder a otro tenant.")
+    if not row.pdf_content:
+        raise HTTPException(status_code=404, detail="PDF no almacenado para esta constancia.")
+
+    filename = row.source_filename or f"csf_{csf_id}.pdf"
+    return Response(
+        content=row.pdf_content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/{csf_id}/revalidate", response_model=RevalidateQRResult)

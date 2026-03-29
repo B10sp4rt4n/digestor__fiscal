@@ -31,7 +31,7 @@ def _compute_processing_status(qr_valid: bool | None, source_filename: str | Non
     return "incomplete", "missing_source_file"
 
 
-def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
+def _persist_csf(data: dict, db: Session, pdf_bytes: bytes | None = None) -> tuple[CSF, bool]:
     """Inserta o recupera CSF por hash. Retorna (csf, created)."""
     existing = db.query(CSF).filter_by(csf_hash=data["csf_hash"]).first()
     if existing:
@@ -53,6 +53,9 @@ def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
             updated = True
         if data.get("source_filename") and existing.source_filename != data["source_filename"]:
             existing.source_filename = data["source_filename"]
+            updated = True
+        if pdf_bytes and existing.pdf_content is None:
+            existing.pdf_content = pdf_bytes
             updated = True
         if data.get("extracted_text") and existing.extracted_text != data["extracted_text"]:
             existing.extracted_text = data["extracted_text"]
@@ -108,6 +111,7 @@ def _persist_csf(data: dict, db: Session) -> tuple[CSF, bool]:
         status_reason=reason,
         csf_hash=data["csf_hash"],
         version=1,
+        pdf_content=pdf_bytes,
     )
     try:
         db.add(csf)
@@ -148,7 +152,7 @@ async def upload_pdf(
     if qr_text:
         data["qr_text"] = qr_text
 
-    csf, created = _persist_csf(data, db)
+    csf, created = _persist_csf(data, db, pdf_bytes=content)
     elapsed = (time.monotonic() - t0) * 1000
     telemetry.record_event(success=True, latency_ms=elapsed)
 
@@ -205,8 +209,9 @@ async def upload_zip(
             continue
 
         item["source_filename"] = item.get("filename")
+        pdf_bytes_item = item.pop("_pdf_bytes", None)
 
-        csf, created = _persist_csf(item, db)
+        csf, created = _persist_csf(item, db, pdf_bytes=pdf_bytes_item)
         elapsed = (time.monotonic() - t0) * 1000
         telemetry.record_event(success=True, latency_ms=elapsed)
 

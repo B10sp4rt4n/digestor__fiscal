@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "[Digestor] Iniciando backend en http://${API_HOST}:${API_PORT} ..."
-hypercorn app.main:app --reload --bind "${API_HOST}:${API_PORT}" &
+hypercorn app.main:app --reload --bind "${API_HOST}:${API_PORT}" --keep-alive 65 &
 API_PID=$!
 
 sleep 2

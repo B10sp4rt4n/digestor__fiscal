@@ -38,14 +38,14 @@ def upgrade() -> None:
         """
         UPDATE csf
         SET processing_status = CASE
-            WHEN qr_valid = 1 THEN 'processed'
-            WHEN qr_valid = 0 THEN 'needs_review'
+            WHEN qr_valid = TRUE THEN 'processed'
+            WHEN qr_valid = FALSE THEN 'needs_review'
             WHEN source_filename IS NOT NULL THEN 'pending_qr'
             ELSE 'incomplete'
         END,
         status_reason = CASE
-            WHEN qr_valid = 1 THEN NULL
-            WHEN qr_valid = 0 THEN 'qr_invalid'
+            WHEN qr_valid = TRUE THEN NULL
+            WHEN qr_valid = FALSE THEN 'qr_invalid'
             WHEN source_filename IS NOT NULL THEN 'qr_not_detected'
             ELSE 'missing_source_file'
         END

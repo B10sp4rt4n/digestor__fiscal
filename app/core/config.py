@@ -4,13 +4,21 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     DB_URL: str = "sqlite:///./local.db"
+    DATABASE_URL: Optional[str] = None
     USE_SQLITE: bool = False
+    DB_SSL_REQUIRE: bool = True
+    DB_POOL_PRE_PING: bool = True
+    DB_POOL_RECYCLE_SECONDS: int = 1800
     API_KEY: str = "change-me-please"
     TENANT_ID: str = "demo-company"
     DEFAULT_USER_ID: str = "local-user"
     DEFAULT_USER_ROLE: str = "admin"
     SURVIVAL_ENABLED: bool = True
     UPLOAD_DIR: str = "./uploads"
+    LOCAL_BACKUP_ENABLED: bool = True
+    LOCAL_BACKUP_DIR: str = "./backups"
+    LOCAL_BACKUP_PRETTY: bool = True
+    LOCAL_BACKUP_INCLUDE_USERS: bool = False
 
     # Auth / tenancy
     AUTH_CONNECTOR: str = "jwt"  # none|header|jwt
@@ -53,6 +61,11 @@ class Settings(BaseSettings):
     GROQ_PARSER_ENABLED: bool = True
     AI_FIELD_CORRECTION_ENABLED: bool = True
     AI_FIELD_CORRECTION_MIN_CONFIDENCE: float = 0.70
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-4.1-mini"
+    AI_FIELD_VALIDATION_ENABLED: bool = False
+    AI_FIELD_VALIDATION_AUTO_APPLY: bool = False
+    AI_FIELD_VALIDATION_MIN_CONFIDENCE: float = 0.85
 
     # Geolocalización por código postal (MX)
     GEO_CP_ENABLED: bool = True
@@ -71,6 +84,10 @@ class Settings(BaseSettings):
     SERVICE_VERSION: str = "0.1.0"
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @property
+    def effective_db_url(self) -> str:
+        return (self.DATABASE_URL or self.DB_URL).strip()
 
 
 settings = Settings()

@@ -621,6 +621,105 @@ def _suggest_field_corrections_via_groq(
         return []
 
 
+def _suggest_field_corrections_via_openai(
+    crm_autofill: Dict[str, str],
+    extracted_text: str,
+) -> list[Dict[str, Any]]:
+    """Valida los campos individualmente con OpenAI y devuelve sugerencias de corrección."""
+    if not settings.AI_FIELD_VALIDATION_ENABLED:
+        return []
+    if not settings.OPENAI_API_KEY:
+        return []
+
+    fields_payload = [
+        {"field": key, "current_value": value}
+        for key, value in crm_autofill.items()
+        if value
+    ]
+    if not fields_payload:
+        return []
+
+    import json as _json
+
+    context_text = format_extracted_csf_text(extracted_text) or extracted_text
+    snippet = context_text[:7000]
+
+    prompt = (
+        "Eres un auditor de calidad de datos fiscales mexicanos.\n"
+        "Debes revisar CADA campo del payload de forma independiente usando como única fuente de verdad el texto de una CSF SAT.\n"
+        "Corrige solo errores evidentes de OCR, texto pegado, truncado o pérdida de espacios.\n"
+        "No inventes datos y no cambies campos correctos.\n"
+        "Ejemplos válidos de corrección: 'SANFRANCISCO' -> 'SAN FRANCISCO', '28DENOVIEMBRE DE1996' -> '28 DE NOVIEMBRE DE 1996', 'EMILIANO' -> 'EMILIANO ZAPATA' si el texto lo confirma.\n\n"
+        "Devuelve ÚNICAMENTE un JSON válido con esta forma exacta:\n"
+        '{"suggestions":[{"field":"...","current_value":"...","suggested_value":"...","needs_correction":true,"reason":"...","confidence":0.91}]}\n'
+        "Incluye un objeto por cada campo del payload revisado.\n"
+        "Si un campo está correcto, pon needs_correction=false y suggested_value igual al valor actual.\n\n"
+        f"Campos a revisar:\n{_json.dumps(fields_payload, ensure_ascii=False)}\n\n"
+        f"Texto fuente:\n{snippet}"
+    )
+
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            response_format={"type": "json_object"},
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Valida campos fiscales uno por uno y responde solo JSON.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.1,
+        )
+        raw_text = response.choices[0].message.content or "{}"
+        payload = _json.loads(raw_text)
+        suggestions = payload.get("suggestions") or []
+        output: list[Dict[str, Any]] = []
+        for item in suggestions:
+            if not isinstance(item, dict):
+                continue
+            field = str(item.get("field") or "").strip()
+            current_value = str(item.get("current_value") or "").strip()
+            suggested_value = str(item.get("suggested_value") or "").strip()
+            needs_correction = bool(item.get("needs_correction"))
+            reason = str(item.get("reason") or "").strip()
+            try:
+                confidence = round(float(item.get("confidence") or 0.0), 3)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if not field:
+                continue
+            if needs_correction and suggested_value and suggested_value != current_value:
+                output.append({
+                    "field": field,
+                    "current_value": current_value,
+                    "suggested_value": suggested_value,
+                    "reason": reason,
+                    "confidence": confidence,
+                })
+        return output
+    except Exception as exc:
+        logger.warning("OpenAI field-by-field validation falló: %s", exc)
+        return []
+
+
+def _suggest_field_corrections(
+    crm_autofill: Dict[str, str],
+    extracted_text: str,
+) -> list[Dict[str, Any]]:
+    """Usa OpenAI como validador primario y Groq como fallback."""
+    suggestions = _suggest_field_corrections_via_openai(crm_autofill, extracted_text)
+    if suggestions:
+        return suggestions
+    return _suggest_field_corrections_via_groq(crm_autofill, extracted_text)
+
+
 def _build_corrected_json(
     crm_autofill: Dict[str, str],
     ai_field_corrections: list[Dict[str, Any]],
@@ -631,7 +730,12 @@ def _build_corrected_json(
     if not ai_field_corrections:
         return corrected
 
-    threshold = float(min_confidence if min_confidence is not None else settings.AI_FIELD_CORRECTION_MIN_CONFIDENCE)
+    if min_confidence is not None:
+        threshold = float(min_confidence)
+    elif settings.AI_FIELD_VALIDATION_ENABLED:
+        threshold = float(settings.AI_FIELD_VALIDATION_MIN_CONFIDENCE)
+    else:
+        threshold = float(settings.AI_FIELD_CORRECTION_MIN_CONFIDENCE)
     for suggestion in ai_field_corrections:
         if not isinstance(suggestion, dict):
             continue
@@ -1041,7 +1145,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
             crm_autofill.setdefault("geo_city", geolocation["city"])
         if geolocation.get("state"):
             crm_autofill.setdefault("geo_state", geolocation["state"])
-    ai_field_corrections = _suggest_field_corrections_via_groq(crm_autofill, text)
+    ai_field_corrections = _suggest_field_corrections(crm_autofill, text)
     corrected_json = _build_corrected_json(crm_autofill, ai_field_corrections)
     csf_hash = _sha256(content)
 
@@ -1085,6 +1189,7 @@ def process_zip(content: bytes, company_id: str, validate_online: Optional[bool]
             try:
                 data = process_pdf(pdf_bytes, company_id, validate_online=validate_online)
                 data["filename"] = name
+                data["_pdf_bytes"] = pdf_bytes
                 results.append(data)
             except Exception as exc:
                 results.append({

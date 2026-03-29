@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.models.document_job import DocumentJob
+from app.models.document_sync_event import DocumentSyncEvent
 from app.models.csf import CSF
 
 
@@ -123,3 +124,52 @@ def get_tenant_alerts(db: Session, company_id: str) -> list[dict[str, Any]]:
         })
 
     return alerts
+
+
+def get_outbound_metrics(db: Session, company_id: str, hours: int = 24) -> dict[str, Any]:
+    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+
+    queued = db.query(DocumentSyncEvent).filter(
+        DocumentSyncEvent.company_id == company_id,
+        DocumentSyncEvent.delivery_status == "queued",
+    ).count()
+    retry = db.query(DocumentSyncEvent).filter(
+        DocumentSyncEvent.company_id == company_id,
+        DocumentSyncEvent.delivery_status == "retry",
+    ).count()
+    delivered = db.query(DocumentSyncEvent).filter(
+        DocumentSyncEvent.company_id == company_id,
+        DocumentSyncEvent.delivery_status == "delivered",
+        DocumentSyncEvent.updated_at >= cutoff_time,
+    ).count()
+    failed_dlq = db.query(DocumentSyncEvent).filter(
+        DocumentSyncEvent.company_id == company_id,
+        DocumentSyncEvent.delivery_status == "failed_dlq",
+        DocumentSyncEvent.updated_at >= cutoff_time,
+    ).count()
+
+    total = queued + retry + delivered + failed_dlq
+
+    oldest_pending = db.query(DocumentSyncEvent).filter(
+        DocumentSyncEvent.company_id == company_id,
+        DocumentSyncEvent.delivery_status.in_(["queued", "retry"]),
+    ).order_by(DocumentSyncEvent.created_at.asc()).first()
+
+    oldest_pending_age_seconds = 0.0
+    if oldest_pending and oldest_pending.created_at:
+        oldest_pending_age_seconds = (datetime.utcnow() - oldest_pending.created_at).total_seconds()
+
+    completed = delivered + failed_dlq
+    success_rate = (delivered / completed * 100.0) if completed > 0 else 0.0
+
+    return {
+        "company_id": company_id,
+        "period_hours": hours,
+        "queued": queued,
+        "retry": retry,
+        "delivered": delivered,
+        "failed_dlq": failed_dlq,
+        "total": total,
+        "oldest_pending_age_seconds": round(oldest_pending_age_seconds, 2),
+        "success_rate_percent": round(success_rate, 2),
+    }

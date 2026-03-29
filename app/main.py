@@ -15,14 +15,17 @@ from app.db.session import engine
 import app.models.audit_log         # noqa: F401
 import app.models.csf              # noqa: F401
 import app.models.document_job     # noqa: F401
+import app.models.document_sync_event  # noqa: F401
 import app.models.sucursal         # noqa: F401
 import app.models.usuario          # noqa: F401
 import app.models.evento           # noqa: F401
 import app.models.user             # noqa: F401
 
-from app.api.routers import audit_v1, backups, csf, documents_v1, health, metrics_v1, upload, sync, telemetry as telemetry_router
+from app.api.routers import audit_v1, backups, csf, documents_v1, health, metrics_v1, upload, sync, sync_v1, telemetry as telemetry_router
 from app.api.routers import auth_router
 from app.services import telemetry
+from app.services.document_queue import document_queue
+from app.services.outbound_delivery_service import outbound_delivery_worker
 
 
 async def _autopoll_loop():
@@ -63,6 +66,10 @@ async def lifespan(app: FastAPI):
     # Seed del primer usuario admin si no existe ninguno
     _seed_initial_admin()
 
+    await document_queue.start(settings.DOCUMENT_QUEUE_WORKERS)
+    if settings.SYNC_OUTBOUND_AUTOPOLL:
+        await outbound_delivery_worker.start()
+
     task = None
     if settings.ALERTS_AUTOPOLL:
         task = asyncio.create_task(_autopoll_loop())
@@ -73,6 +80,10 @@ async def lifespan(app: FastAPI):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+    await document_queue.stop()
+    if settings.SYNC_OUTBOUND_AUTOPOLL:
+        await outbound_delivery_worker.stop()
 
 
 app = FastAPI(
@@ -91,4 +102,5 @@ app.include_router(documents_v1.router)
 app.include_router(metrics_v1.router)
 app.include_router(upload.router)
 app.include_router(sync.router)
+app.include_router(sync_v1.router)
 app.include_router(telemetry_router.router)

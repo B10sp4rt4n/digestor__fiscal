@@ -78,6 +78,10 @@ alembic revision --autogenerate -m "init"
 alembic upgrade head
 ```
 
+## Contrato operativo (SLA/SLO + Integraciones)
+Para alinear carga masiva, correccion por evento y salida a CRM/ERP:
+- Ver `CONTRATO_OPERATIVO_V1.md`
+
 
 ---
 ## Alembic (migraciones) — comandos rápidos

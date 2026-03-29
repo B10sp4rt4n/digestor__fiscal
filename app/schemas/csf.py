@@ -41,6 +41,7 @@ class CSFOut(CSFSummary):
     geolocation: Optional[dict[str, Any]] = None
     ai_field_corrections: Optional[list[dict[str, Any]]] = None
     corrected_json: Optional[dict[str, str]] = None
+    field_validation: Optional[list[dict[str, Any]]] = None
 
     model_config = {"from_attributes": True}
 
@@ -91,6 +92,7 @@ class UploadResult(BaseModel):
     geolocation: Optional[dict[str, Any]] = None
     ai_field_corrections: Optional[list[dict[str, Any]]] = None
     corrected_json: Optional[dict[str, str]] = None
+    field_validation: Optional[list[dict[str, Any]]] = None
     processing_status: Optional[str] = None
     status_reason: Optional[str] = None
     skipped: bool = False

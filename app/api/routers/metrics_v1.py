@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import SecurityContext, enforce_tenant_scope, role_guard
 from app.db.session import get_db
-from app.schemas.metrics import TenantDashboard, TenantAlert, JobMetrics, DocumentMetrics, PerformanceMetrics
+from app.schemas.metrics import TenantDashboard, TenantAlert, JobMetrics, DocumentMetrics, PerformanceMetrics, OutboundMetrics
 from app.services import metrics_service
 
 router = APIRouter(prefix="/v1/metrics", tags=["metrics-v1"])
@@ -43,3 +43,15 @@ def get_alerts(
     cid = enforce_tenant_scope(ctx, company_id)
     alerts_list = metrics_service.get_tenant_alerts(db, cid)
     return [TenantAlert(**alert) for alert in alerts_list]
+
+
+@router.get("/outbound", response_model=OutboundMetrics)
+def get_outbound_metrics(
+    company_id: str = Query(default=None),
+    hours: int = Query(default=24, ge=1, le=720),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
+    db: Session = Depends(get_db),
+):
+    cid = enforce_tenant_scope(ctx, company_id)
+    metrics = metrics_service.get_outbound_metrics(db, cid, hours=hours)
+    return OutboundMetrics(**metrics)

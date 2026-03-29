@@ -24,6 +24,11 @@ def _compute_chain_hash(previous_hash: Optional[str], content_hash: str) -> str:
     return hashlib.sha256(chain_input.encode()).hexdigest()
 
 
+def _serialize_details(details: Optional[dict[str, Any]]) -> str:
+    """Serializar detalles de forma canónica para que el hash sea estable."""
+    return json.dumps(details or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
 def get_last_audit_log(db: Session, company_id: str) -> Optional[AuditLog]:
     """Obtener el último audit log de una empresa para continuar la cadena."""
     return db.query(AuditLog).filter_by(company_id=company_id).order_by(AuditLog.sequence_number.desc()).first()
@@ -50,7 +55,7 @@ def create_audit_log(
     sequence_number = (last_log.sequence_number + 1) if last_log else 1
     
     # Serializar detalles
-    details_json = json.dumps(details or {})
+    details_json = _serialize_details(details)
     
     # Calcular hashes
     content_hash = _compute_content_hash(action, entity_type, entity_id, details_json)

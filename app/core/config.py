@@ -82,6 +82,12 @@ class Settings(BaseSettings):
 
     # Versión
     SERVICE_VERSION: str = "0.1.0"
+    DOCUMENT_QUEUE_WORKERS: int = 1
+    SYNC_OUTBOUND_AUTOPOLL: bool = True
+    SYNC_OUTBOUND_POLL_SECONDS: int = 5
+    SYNC_OUTBOUND_WEBHOOK_URL: Optional[str] = None
+    SYNC_OUTBOUND_MAX_ATTEMPTS: int = 6
+    SYNC_OUTBOUND_ALLOW_NOOP_TARGET: bool = True
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

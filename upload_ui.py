@@ -201,6 +201,70 @@ def build_csf_paraphrase(data: dict) -> str:
 
 
 def build_parsed_text(data: dict) -> str:
+    final_payload = data.get("corrected_json") or data.get("crm_autofill") or {}
+    if final_payload:
+        labels = {
+            "tax_id": "RFC",
+            "legal_name": "Razon social",
+            "trade_name": "Nombre comercial",
+            "tax_regime": "Regimen",
+            "postal_code": "Codigo postal",
+            "curp": "CURP",
+            "cif_id": "idCIF",
+            "status_padron": "Estatus padron",
+            "start_operations_date": "Fecha inicio operaciones",
+            "last_status_change_date": "Fecha ultimo cambio estado",
+            "street_type": "Tipo de vialidad",
+            "street_name": "Nombre de vialidad",
+            "ext_number": "Numero exterior",
+            "int_number": "Numero interior",
+            "neighborhood": "Colonia",
+            "locality": "Localidad",
+            "municipality": "Municipio",
+            "state": "Estado",
+            "between_street": "Entre calle",
+            "and_street": "Y calle",
+            "qr_url": "QR",
+            "geo_city": "Geo ciudad",
+            "geo_state": "Geo estado",
+            "geo_latitude": "Geo latitud",
+            "geo_longitude": "Geo longitud",
+        }
+        ordered_keys = [
+            "tax_id",
+            "legal_name",
+            "trade_name",
+            "tax_regime",
+            "postal_code",
+            "curp",
+            "cif_id",
+            "status_padron",
+            "start_operations_date",
+            "last_status_change_date",
+            "street_type",
+            "street_name",
+            "ext_number",
+            "int_number",
+            "neighborhood",
+            "locality",
+            "municipality",
+            "state",
+            "between_street",
+            "and_street",
+            "qr_url",
+            "geo_city",
+            "geo_state",
+            "geo_latitude",
+            "geo_longitude",
+        ]
+        lines = []
+        for key in ordered_keys:
+            value = final_payload.get(key)
+            if value:
+                lines.append(f"{labels.get(key, key)}: {value}")
+        if lines:
+            return "\n".join(lines)
+
     extracted_text = data.get("extracted_text") or data.get("extracted_text_preview") or ""
     parsed = format_extracted_csf_text(extracted_text)
     if parsed:
@@ -388,6 +452,9 @@ with tab_upload:
                 if data.get("ai_field_corrections"):
                     with st.expander("Corrector IA por campo", expanded=True):
                         st.dataframe(pd.DataFrame(data.get("ai_field_corrections")), width="stretch", hide_index=True)
+                if data.get("field_validation"):
+                    with st.expander("Validacion campo por campo", expanded=True):
+                        st.dataframe(pd.DataFrame(data.get("field_validation")), width="stretch", hide_index=True)
                 if data.get("corrected_json"):
                     with st.expander("JSON corregido", expanded=True):
                         st.json(data.get("corrected_json"))
@@ -575,6 +642,7 @@ with tab_history:
                                         payload = ia_resp.json()
                                         enriched["ai_field_corrections"] = payload.get("ai_field_corrections")
                                         enriched["corrected_json"] = payload.get("corrected_json")
+                                        enriched["field_validation"] = payload.get("field_validation")
                                         if payload.get("crm_autofill"):
                                             enriched["crm_autofill"] = payload.get("crm_autofill")
                                         st.session_state["detail_enriched"][selected_id] = enriched
@@ -609,6 +677,9 @@ with tab_history:
                         if detail.get("ai_field_corrections"):
                             with st.expander("Corrector IA por campo", expanded=True):
                                 st.dataframe(pd.DataFrame(detail.get("ai_field_corrections")), width="stretch", hide_index=True)
+                        if detail.get("field_validation"):
+                            with st.expander("Validacion campo por campo", expanded=True):
+                                st.dataframe(pd.DataFrame(detail.get("field_validation")), width="stretch", hide_index=True)
                         if detail.get("corrected_json"):
                             with st.expander("JSON corregido", expanded=True):
                                 st.json(detail.get("corrected_json"))

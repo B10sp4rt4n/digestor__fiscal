@@ -1,4 +1,4 @@
-.PHONY: install run migrate seed dev
+.PHONY: install run migrate seed test dev
 
 install:
 	python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
@@ -11,5 +11,8 @@ migrate:
 
 seed:
 	python seeds/seed_demo.py
+
+test:
+	pytest -q
 
 dev: install migrate seed run

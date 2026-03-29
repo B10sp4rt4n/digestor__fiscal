@@ -35,3 +35,15 @@ class TenantDashboard(BaseModel):
     documents: DocumentMetrics
     performance: PerformanceMetrics
     alerts: list[TenantAlert] = Field(default_factory=list)
+
+
+class OutboundMetrics(BaseModel):
+    company_id: str
+    period_hours: int
+    queued: int
+    retry: int
+    delivered: int
+    failed_dlq: int
+    total: int
+    oldest_pending_age_seconds: float
+    success_rate_percent: float

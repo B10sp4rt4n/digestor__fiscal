@@ -36,6 +36,30 @@ _qr_cache: Dict[str, Optional[bool]] = {}
 _cp_geo_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 _address_geo_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
+CSF_FIELD_SPECS: list[dict[str, str]] = [
+    {"field": "tax_id", "label": "RFC", "validator": "rfc"},
+    {"field": "legal_name", "label": "Razon social", "validator": "text"},
+    {"field": "trade_name", "label": "Nombre comercial", "validator": "text"},
+    {"field": "tax_regime", "label": "Regimen fiscal", "validator": "text"},
+    {"field": "postal_code", "label": "Codigo postal", "validator": "postal_code"},
+    {"field": "curp", "label": "CURP", "validator": "curp"},
+    {"field": "cif_id", "label": "idCIF", "validator": "cif_id"},
+    {"field": "status_padron", "label": "Estatus en el padron", "validator": "text"},
+    {"field": "start_operations_date", "label": "Fecha inicio operaciones", "validator": "date"},
+    {"field": "last_status_change_date", "label": "Fecha ultimo cambio estado", "validator": "date"},
+    {"field": "street_type", "label": "Tipo de vialidad", "validator": "text"},
+    {"field": "street_name", "label": "Nombre de vialidad", "validator": "text"},
+    {"field": "ext_number", "label": "Numero exterior", "validator": "text"},
+    {"field": "int_number", "label": "Numero interior", "validator": "text"},
+    {"field": "neighborhood", "label": "Colonia", "validator": "text"},
+    {"field": "locality", "label": "Localidad", "validator": "text"},
+    {"field": "municipality", "label": "Municipio", "validator": "text"},
+    {"field": "state", "label": "Entidad federativa", "validator": "text"},
+    {"field": "between_street", "label": "Entre calle", "validator": "text"},
+    {"field": "and_street", "label": "Y calle", "validator": "text"},
+    {"field": "qr_url", "label": "URL QR", "validator": "url"},
+]
+
 
 def _norm_geo_text(value: Optional[str]) -> str:
     if not value:
@@ -156,7 +180,7 @@ def _pick_from_pairs(pairs: Dict[str, str], aliases: list[str]) -> Optional[str]
     return None
 
 
-def _build_crm_autofill(fields: Dict[str, Any], pairs: Dict[str, str]) -> Dict[str, str]:
+def _build_crm_autofill(fields: Dict[str, Any], pairs: Dict[str, str], include_empty: bool = False) -> Dict[str, str]:
     crm: Dict[str, str] = {
         "tax_id": fields.get("rfc") or "",
         "legal_name": fields.get("razon_social") or "",
@@ -199,7 +223,74 @@ def _build_crm_autofill(fields: Dict[str, Any], pairs: Dict[str, str]) -> Dict[s
         "and_street": _pick_from_pairs(pairs, ["Y Calle", "YCalle"]) or "",
         "qr_url": fields.get("qr_text") or "",
     }
+    if include_empty:
+        return crm
     return {k: v for k, v in crm.items() if v}
+
+
+def _is_valid_field_value(value: str, validator: str) -> bool:
+    value = (value or "").strip()
+    if not value:
+        return False
+    if validator == "rfc":
+        return bool(re.fullmatch(r"[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}", value, re.IGNORECASE))
+    if validator == "postal_code":
+        return bool(re.fullmatch(r"\d{5}", value))
+    if validator == "curp":
+        return bool(re.fullmatch(r"[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]{2}", value, re.IGNORECASE))
+    if validator == "cif_id":
+        return bool(re.fullmatch(r"\d+", value))
+    if validator == "date":
+        return bool(re.fullmatch(r"\d{2}/\d{2}/\d{4}", value))
+    if validator == "url":
+        return bool(re.match(r"https?://", value, re.IGNORECASE))
+    return True
+
+
+def _build_field_validation_report(
+    crm_autofill: Dict[str, str],
+    ai_field_corrections: Optional[list[Dict[str, Any]]] = None,
+) -> list[Dict[str, Any]]:
+    corrections_by_field: Dict[str, Dict[str, Any]] = {}
+    for suggestion in ai_field_corrections or []:
+        if not isinstance(suggestion, dict):
+            continue
+        field = str(suggestion.get("field") or "").strip()
+        if field:
+            corrections_by_field[field] = suggestion
+
+    report: list[Dict[str, Any]] = []
+    for spec in CSF_FIELD_SPECS:
+        field = spec["field"]
+        value = str(crm_autofill.get(field) or "").strip()
+        suggestion = corrections_by_field.get(field)
+        has_value = bool(value)
+        format_ok = _is_valid_field_value(value, spec["validator"])
+        suggested_value = None
+        reason = "ok"
+
+        if suggestion:
+            suggested_value = str(suggestion.get("suggested_value") or "").strip() or None
+            reason = str(suggestion.get("reason") or "requiere_correccion").strip() or "requiere_correccion"
+
+        is_ok = has_value and format_ok and suggestion is None
+        if not has_value:
+            reason = "faltante"
+        elif not format_ok:
+            reason = "formato_invalido"
+
+        report.append({
+            "field": field,
+            "label": spec["label"],
+            "value": value or None,
+            "status": "si" if is_ok else "no",
+            "is_ok": is_ok,
+            "reason": reason,
+            "suggested_value": suggested_value,
+            "confidence": suggestion.get("confidence") if suggestion else None,
+        })
+
+    return report
 
 
 def _lookup_cp_geolocation(cp: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -564,7 +655,6 @@ def _suggest_field_corrections_via_groq(
     fields_payload = [
         {"field": k, "current_value": v}
         for k, v in crm_autofill.items()
-        if v
     ]
     if not fields_payload:
         return []
@@ -634,7 +724,6 @@ def _suggest_field_corrections_via_openai(
     fields_payload = [
         {"field": key, "current_value": value}
         for key, value in crm_autofill.items()
-        if value
     ]
     if not fields_payload:
         return []
@@ -1135,6 +1224,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
     fields = _parse_csf_fields(text)
     colon_pairs = _extract_colon_pairs(text)
     crm_autofill = _build_crm_autofill(fields, colon_pairs)
+    crm_autofill_complete = _build_crm_autofill(fields, colon_pairs, include_empty=True)
     geolocation = _resolve_geolocation(fields.get("cp"), crm_autofill)
     if geolocation:
         if geolocation.get("latitude") is not None:
@@ -1145,8 +1235,9 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
             crm_autofill.setdefault("geo_city", geolocation["city"])
         if geolocation.get("state"):
             crm_autofill.setdefault("geo_state", geolocation["state"])
-    ai_field_corrections = _suggest_field_corrections(crm_autofill, text)
-    corrected_json = _build_corrected_json(crm_autofill, ai_field_corrections)
+    ai_field_corrections = _suggest_field_corrections(crm_autofill_complete, text)
+    corrected_json = _build_corrected_json(crm_autofill_complete, ai_field_corrections)
+    field_validation = _build_field_validation_report(crm_autofill_complete, ai_field_corrections)
     csf_hash = _sha256(content)
 
     if not fields.get("qr_text"):
@@ -1175,6 +1266,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
         "geolocation": geolocation,
         "ai_field_corrections": ai_field_corrections,
         "corrected_json": corrected_json,
+        "field_validation": field_validation,
     }
 
 

@@ -125,6 +125,7 @@ def get_csf(
     data["geolocation"] = None
     data["ai_field_corrections"] = []
     data["corrected_json"] = None
+    data["field_validation"] = []
 
     if include_geo or include_ai_corrections:
         parsed_pairs = ingest._extract_colon_pairs(row.extracted_text or "")
@@ -138,6 +139,7 @@ def get_csf(
             "qr_text": row.qr_text,
         }
         crm = ingest._build_crm_autofill(field_map, parsed_pairs)
+        crm_complete = ingest._build_crm_autofill(field_map, parsed_pairs, include_empty=True)
         geo = None
 
         if include_geo:
@@ -156,13 +158,17 @@ def get_csf(
         data["geolocation"] = geo
         if include_ai_corrections and crm:
             data["ai_field_corrections"] = ingest._suggest_field_corrections(
-                crm,
+                crm_complete,
                 row.extracted_text or "",
             )
             data["corrected_json"] = ingest._build_corrected_json(
-                crm,
+                crm_complete,
                 data["ai_field_corrections"],
             )
+        data["field_validation"] = ingest._build_field_validation_report(
+            crm_complete,
+            data["ai_field_corrections"],
+        )
     return data
 
 

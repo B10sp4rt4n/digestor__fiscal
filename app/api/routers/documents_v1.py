@@ -1,45 +1,17 @@
-import time
-from typing import Optional
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request
 from sqlalchemy.orm import Session
 
-from app.api.routers.upload import _persist_csf
 from app.core.auth import SecurityContext, enforce_tenant_scope, role_guard, can_access_tenant
 from app.db.session import get_db
-from app.models.document_job import DocumentJob
+from app.models.csf import CSF
 from app.schemas.document_api import UniversalDocumentResponse, UniversalDocumentResult
-from app.services import ingest, job_service, audit_service
+from app.schemas.sync_outbound import DocumentApproveRequest, DocumentApproveResponse
+from app.services import audit_service, job_service
+from app.services.document_queue import DocumentTask, document_queue
 
 router = APIRouter(prefix="/v1/documents", tags=["documents-v1"])
-
-
-def _process_document_csf(
-    db: Session,
-    job_id: str,
-    company_id: str,
-    content: bytes,
-    filename: str,
-    validate_online: bool = False,
-) -> tuple[Optional[str], Optional[str]]:
-    """Procesa un documento CSF y retorna (document_id, error)."""
-    t0 = time.monotonic()
-    try:
-        job_service.update_job_processing(db, job_id)
-
-        ingest.save_upload(content, filename)
-        data = ingest.process_pdf(content, company_id, validate_online=validate_online)
-        data["source_filename"] = filename
-
-        csf, _created = _persist_csf(data, db, pdf_bytes=content)
-        elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-        job_service.update_job_done(db, job_id, csf.id, elapsed_ms)
-        return csf.id, None
-    except Exception as exc:
-        error_msg = str(exc)
-        job_service.update_job_failed(db, job_id, error_msg)
-        return None, error_msg
 
 
 @router.post("", response_model=UniversalDocumentResponse)
@@ -88,38 +60,25 @@ async def ingest_document(
     # Leer contenido del archivo
     content = await file.read()
 
-    # NOTA: Por ahora procesamos sincronamente aquí.
-    # En producción, encolar en Redis/Celery y devolver inmediatamente.
-    document_id, error = _process_document_csf(db, job_id, cid, content, file.filename, validate_online)
-
-    job = job_service.get_job(db, job_id)
-    
-    # Registrar en auditoría: resultado del procesamiento
-    audit_service.create_audit_log(
-        db,
-        company_id=cid,
-        user_id=ctx.user_id,
-        action="document_upload_complete",
-        entity_type="document_job",
-        entity_id=job_id,
-        details={
-            "status": job.status,
-            "document_id": document_id,
-            "error": error,
-        },
-        ip_address=request.client.host if request else None,
-        user_agent=request.headers.get("user-agent") if request else None,
-        status="success" if not error else "error",
-        error_message=error,
+    await document_queue.enqueue(
+        DocumentTask(
+            job_id=job_id,
+            company_id=cid,
+            user_id=ctx.user_id,
+            document_type=document_type,
+            filename=file.filename,
+            content=content,
+            validate_online=validate_online,
+            ip_address=request.client.host if request else None,
+            user_agent=request.headers.get("user-agent") if request else None,
+        )
     )
 
     return UniversalDocumentResponse(
         job_id=job_id,
-        status=job.status,
+        status="queued",
         document_type=document_type,
         company_id=cid,
-        document_id=document_id,
-        error=error,
     )
 
 
@@ -158,4 +117,65 @@ def get_job_status(
         document_id=job.document_id,
         error=job.error,
         result=result,
+    )
+
+
+@router.post("/{document_id}/approve", response_model=DocumentApproveResponse)
+def approve_document_for_sync(
+    document_id: str,
+    body: DocumentApproveRequest,
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
+    db: Session = Depends(get_db),
+):
+    row = db.query(CSF).filter(CSF.id == document_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Documento no encontrado.")
+
+    cid = enforce_tenant_scope(ctx, body.company_id or row.company_id)
+    if row.company_id != cid:
+        raise HTTPException(status_code=403, detail="No puedes aprobar documentos de otro tenant.")
+
+    required_fields = {
+        "tax_id": bool((row.rfc or "").strip()),
+        "legal_name": bool((row.razon_social or "").strip()),
+        "tax_regime": bool((row.regimen or "").strip()),
+        "postal_code": bool((row.cp or "").strip()),
+        "cif_id": bool((row.id_cif or "").strip()),
+    }
+    missing = [field for field, ok in required_fields.items() if not ok]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "VALIDATION_FAILED",
+                "message": "Documento no cumple criterios de aprobacion para sync.",
+                "details": {"missing_fields": missing},
+            },
+        )
+
+    approved_at = datetime.utcnow()
+    row.processing_status = "approved_for_sync"
+    row.status_reason = f"approved_by:{ctx.user_id}"
+    db.commit()
+    db.refresh(row)
+
+    audit_service.create_audit_log(
+        db,
+        company_id=cid,
+        user_id=ctx.user_id,
+        action="document_approved_for_sync",
+        entity_type="csf",
+        entity_id=row.id,
+        details={
+            "notes": body.notes,
+            "processing_status": row.processing_status,
+        },
+        status="success",
+    )
+
+    return DocumentApproveResponse(
+        document_id=row.id,
+        company_id=cid,
+        status=row.processing_status,
+        approved_at=approved_at,
     )

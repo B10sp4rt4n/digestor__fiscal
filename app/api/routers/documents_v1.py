@@ -1,7 +1,7 @@
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request
 from sqlalchemy.orm import Session
 
 from app.api.routers.upload import _persist_csf
@@ -9,7 +9,7 @@ from app.core.auth import SecurityContext, enforce_tenant_scope, role_guard, can
 from app.db.session import get_db
 from app.models.document_job import DocumentJob
 from app.schemas.document_api import UniversalDocumentResponse, UniversalDocumentResult
-from app.services import ingest, job_service
+from app.services import ingest, job_service, audit_service
 
 router = APIRouter(prefix="/v1/documents", tags=["documents-v1"])
 
@@ -50,10 +50,11 @@ async def ingest_document(
     validate_online: bool = Form(default=False),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """Contrato universal v1 para ingesta de documentos.
 
-    Devuelve job_id inmediatamente. Usa GET /v1/jobs/{job_id} para consultar progreso.
+    Devuelve job_id inmediatamente. Usa GET /v1/{job_id} para consultar progreso.
     """
     cid = enforce_tenant_scope(ctx, company_id)
 
@@ -65,6 +66,24 @@ async def ingest_document(
 
     # Crear job en BD
     job_id = job_service.create_job(db, cid, document_type)
+    
+    # Registrar en auditoría: creación de job
+    audit_service.create_audit_log(
+        db,
+        company_id=cid,
+        user_id=ctx.user_id,
+        action="document_upload_start",
+        entity_type="document_job",
+        entity_id=job_id,
+        details={
+            "filename": file.filename,
+            "document_type": document_type,
+            "validate_online": validate_online,
+        },
+        ip_address=request.client.host if request else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+        status="success",
+    )
 
     # Leer contenido del archivo
     content = await file.read()
@@ -74,6 +93,25 @@ async def ingest_document(
     document_id, error = _process_document_csf(db, job_id, cid, content, file.filename, validate_online)
 
     job = job_service.get_job(db, job_id)
+    
+    # Registrar en auditoría: resultado del procesamiento
+    audit_service.create_audit_log(
+        db,
+        company_id=cid,
+        user_id=ctx.user_id,
+        action="document_upload_complete",
+        entity_type="document_job",
+        entity_id=job_id,
+        details={
+            "status": job.status,
+            "document_id": document_id,
+            "error": error,
+        },
+        ip_address=request.client.host if request else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+        status="success" if not error else "error",
+        error_message=error,
+    )
 
     return UniversalDocumentResponse(
         job_id=job_id,

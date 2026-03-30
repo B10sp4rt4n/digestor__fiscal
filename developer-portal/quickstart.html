@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quickstart | Digestor Fiscal Developer Hub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="topbar">
+      <a class="brand" href="./index.html">Digestor Fiscal</a>
+      <a class="pill" id="docs-link" href="#" target="_blank" rel="noreferrer">Docs API</a>
+    </header>
+
+    <main class="container">
+      <section class="hero compact">
+        <p class="kicker">Quickstart</p>
+        <h1>Onboarding técnico en 5 minutos</h1>
+      </section>
+
+      <section class="card steps">
+        <h2>1) Crear sandbox</h2>
+        <pre><code id="step1">curl -X POST "https://api.tu-dominio.com/auth/sandbox/signup" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo_dev"}'</code></pre>
+
+        <h2>2) Subir primer documento</h2>
+        <pre><code id="step2">curl -X POST "https://api.tu-dominio.com/v1/documents" \
+  -H "Authorization: Bearer TU_TOKEN" \
+  -F "file=@./mi_csf.pdf" \
+  -F "document_type=csf"</code></pre>
+
+        <h2>3) Consultar estado</h2>
+        <pre><code id="step3">curl -X GET "https://api.tu-dominio.com/v1/documents/DOCUMENT_ID" \
+  -H "Authorization: Bearer TU_TOKEN"</code></pre>
+      </section>
+
+      <section class="card">
+        <h2>SDKs en este repositorio</h2>
+        <ul>
+          <li><span class="mono">sdk/python/digestor_sdk.py</span></li>
+          <li><span class="mono">sdk/typescript/client.ts</span></li>
+        </ul>
+      </section>
+    </main>
+    <script src="./portal.js"></script>
+  </body>
+</html>

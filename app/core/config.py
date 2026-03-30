@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     SYNC_OUTBOUND_MAX_ATTEMPTS: int = 6
     SYNC_OUTBOUND_ALLOW_NOOP_TARGET: bool = True
 
+    # Developer-led GTM
+    DEVELOPER_PORTAL_ENABLED: bool = True
+    DEVELOPER_SANDBOX_ENABLED: bool = True
+    DEVELOPER_SANDBOX_TENANT_PREFIX: str = "sandbox"
+    DEVELOPER_SANDBOX_USERNAME_PREFIX: str = "dev"
+    DEVELOPER_SANDBOX_DEFAULT_ROLE: str = "operator"
+    DEVELOPER_SANDBOX_TOKEN_EXPIRE_MINUTES: int = 1440
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
     @property

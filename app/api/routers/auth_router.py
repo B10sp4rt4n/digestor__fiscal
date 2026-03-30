@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
@@ -54,6 +55,22 @@ class TokenResponse(BaseModel):
     username: str
     role: str
     tenant_id: str
+
+
+class SandboxSignupRequest(BaseModel):
+    username: str | None = None
+    password: str | None = None
+
+
+class SandboxSignupResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+    username: str
+    role: str
+    tenant_id: str
+    docs_url: str
+    openapi_url: str
 
 
 class UserOut(BaseModel):
@@ -127,3 +144,55 @@ def me(
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
     return user
+
+
+@router.post("/sandbox/signup", response_model=SandboxSignupResponse, status_code=201)
+def sandbox_signup(body: SandboxSignupRequest, db: Session = Depends(get_db)):
+    if not settings.DEVELOPER_SANDBOX_ENABLED:
+        raise HTTPException(status_code=404, detail="Sandbox no disponible.")
+
+    username = (body.username or "").strip().lower()
+    if not username:
+        token_suffix = secrets.token_hex(3)
+        username = f"{settings.DEVELOPER_SANDBOX_USERNAME_PREFIX}_{token_suffix}"
+
+    if len(username) < 4:
+        raise HTTPException(status_code=422, detail="username debe tener al menos 4 caracteres.")
+
+    # Creamos tenant por usuario para aislar pruebas.
+    tenant_id = f"{settings.DEVELOPER_SANDBOX_TENANT_PREFIX}-{username}"
+
+    if get_user_by_username(db, username):
+        raise HTTPException(status_code=409, detail="El nombre de usuario ya existe.")
+
+    password = body.password or f"{secrets.token_urlsafe(10)}A1"
+    if len(password) < 8:
+        raise HTTPException(status_code=422, detail="password debe tener al menos 8 caracteres.")
+
+    role = settings.DEVELOPER_SANDBOX_DEFAULT_ROLE
+    if role not in {"viewer", "operator", "admin", "superadmin"}:
+        role = "operator"
+
+    user = create_user(
+        db,
+        username=username,
+        password=password,
+        tenant_id=tenant_id,
+        role=role,
+    )
+
+    expire_minutes = settings.DEVELOPER_SANDBOX_TOKEN_EXPIRE_MINUTES
+    token = create_access_token(
+        data={"sub": user.username, "tenant": user.tenant_id, "role": user.role},
+        expires_delta=timedelta(minutes=expire_minutes),
+    )
+
+    return SandboxSignupResponse(
+        access_token=token,
+        expires_in=expire_minutes * 60,
+        username=user.username,
+        role=user.role,
+        tenant_id=user.tenant_id,
+        docs_url="/docs",
+        openapi_url="/openapi.json",
+    )

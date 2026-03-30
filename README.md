@@ -60,6 +60,66 @@ hypercorn app.main:app --reload --bind 0.0.0.0:8000
 - `GET  /health` → estado simple
 - `GET  /version` → versión del servicio
 
+## Developer API (developer-led)
+
+La API es REST y expone OpenAPI automaticamente.
+
+- `GET /docs` → Swagger UI
+- `GET /redoc` → ReDoc
+- `GET /openapi.json` → especificacion OpenAPI
+- `GET /developer` → portal developer (metadatos y links)
+- `GET /developer/quickstart` → pasos de onboarding por API
+
+### Sandbox: probar antes de pagar
+
+Puedes crear cuenta de prueba sin intervención comercial:
+
+```bash
+curl -X POST "http://localhost:8000/auth/sandbox/signup" \
+	-H "Content-Type: application/json" \
+	-d '{"username":"demo_dev"}'
+```
+
+La respuesta incluye `access_token` y `tenant_id` de sandbox aislado.
+
+### SDKs base incluidos
+- Python: `sdk/python/digestor_sdk.py`
+- TypeScript: `sdk/typescript/client.ts`
+
+### Guía rápida completa
+- Ver `docs/DEVELOPER_HUB.md`
+
+## Portal público en Netlify
+
+Este repo ya incluye un portal estático en `developer-portal/` y configuración en `netlify.toml`.
+
+### Deploy
+1. Conecta este repo en Netlify.
+2. Netlify detectará `netlify.toml` y publicará `developer-portal/`.
+3. Abre tu sitio con `?apiBase=https://TU_API_PUBLICA` para apuntar a tu backend real.
+
+Ejemplo:
+`https://tu-portal.netlify.app/?apiBase=https://api.tu-dominio.com`
+
+## Deploy API en Railway
+
+Este repo incluye `Procfile` para Railway:
+
+- `web: hypercorn app.main:app --bind 0.0.0.0:${PORT:-8000}`
+
+Variables mínimas recomendadas en Railway:
+- `DATABASE_URL` (Neon)
+- `DB_SSL_REQUIRE=1`
+- `AUTH_CONNECTOR=jwt`
+- `AUTH_ALLOW_ANONYMOUS=0`
+- `JWT_SECRET_KEY` (largo y privado)
+- `SEED_ADMIN_USERNAME`
+- `SEED_ADMIN_PASSWORD`
+- `SEED_ADMIN_TENANT`
+
+Healthcheck sugerido:
+- `/health`
+
 ## Estructura básica
 - `app/core/config.py` → settings y DB toggle
 - `app/db/session.py` → sesión SQLAlchemy

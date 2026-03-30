@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Digestor Fiscal Developer Hub</title>
+    <meta
+      name="description"
+      content="API REST para documentos fiscales: sandbox, OpenAPI, quickstart y SDKs."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Sora:wght@600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="noise" aria-hidden="true"></div>
+    <header class="topbar">
+      <div class="brand">Digestor Fiscal</div>
+      <a class="pill" href="./quickstart.html">Quickstart</a>
+    </header>
+
+    <main class="container">
+      <section class="hero">
+        <p class="kicker">Developer Hub</p>
+        <h1>Integra documentos fiscales en minutos, no en meses.</h1>
+        <p class="sub">
+          API REST con OpenAPI, sandbox self-serve y SDKs base para acelerar tu onboarding técnico.
+        </p>
+        <div class="cta-row">
+          <a class="btn primary" id="docs-link" href="#" target="_blank" rel="noreferrer">Abrir Docs API</a>
+          <a class="btn ghost" id="sandbox-link" href="#" target="_blank" rel="noreferrer">Crear Sandbox</a>
+        </div>
+      </section>
+
+      <section class="card grid">
+        <article>
+          <h2>Qué ya tienes</h2>
+          <ul>
+            <li>REST API con OpenAPI autogenerado.</li>
+            <li>Sandbox signup por API.</li>
+            <li>SDK Python y TypeScript base.</li>
+            <li>Pipeline de documentos con estado y trazabilidad.</li>
+          </ul>
+        </article>
+        <article>
+          <h2>URLs importantes</h2>
+          <ul class="mono">
+            <li id="api-base">API Base: configurando...</li>
+            <li id="docs-url">/docs</li>
+            <li id="openapi-url">/openapi.json</li>
+            <li id="quickstart-url">/developer/quickstart</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="card">
+        <h2>Primer request</h2>
+        <pre><code id="sample-curl">curl -X POST "https://api.tu-dominio.com/auth/sandbox/signup" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"demo_dev"}'</code></pre>
+      </section>
+
+      <section class="footer-note">
+        <p>Configura <span class="mono">?apiBase=https://api.tu-dominio.com</span> para apuntar este portal a tu backend.</p>
+      </section>
+    </main>
+
+    <script src="./portal.js"></script>
+  </body>
+</html>

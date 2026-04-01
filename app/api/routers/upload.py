@@ -2,6 +2,7 @@
 Router de carga de CSFs — /upload/pdf y /upload/zip
 """
 from datetime import datetime
+import hashlib
 import time
 import uuid
 from typing import List
@@ -33,6 +34,12 @@ def _compute_processing_status(qr_valid: bool | None, source_filename: str | Non
 
 def _persist_csf(data: dict, db: Session, pdf_bytes: bytes | None = None) -> tuple[CSF, bool]:
     """Inserta o recupera CSF por hash. Retorna (csf, created)."""
+    # Evita colisiones entre tenants para el mismo documento.
+    # El hash almacenado queda aislado por company_id para mantener deduplicacion local al tenant.
+    raw_hash = data["csf_hash"]
+    tenant_scoped_hash = hashlib.sha256(f"{data['company_id']}:{raw_hash}".encode()).hexdigest()
+    data["csf_hash"] = tenant_scoped_hash
+
     existing = db.query(CSF).filter_by(csf_hash=data["csf_hash"]).first()
     if existing:
         updated = False

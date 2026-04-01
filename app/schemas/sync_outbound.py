@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timezone
+import secrets
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -25,16 +26,16 @@ class OutboundQuality(BaseModel):
 class OutboundDocument(BaseModel):
     document_id: str
     document_type: str = "csf"
-    csf_hash: str
-    normalized_payload: dict[str, Any]
-    quality: OutboundQuality
+    csf_hash: str | None = None
+    normalized_payload: dict[str, Any] | None = None
+    quality: OutboundQuality | None = None
 
 
 class OutboundSyncRequest(BaseModel):
     contract_version: str = "v1.0"
-    event_type: str
-    event_id: str
-    event_time: datetime
+    event_type: str = "csf_sync"
+    event_id: str = Field(default_factory=lambda: f"evt-{secrets.token_hex(6)}")
+    event_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     company_id: str | None = None
     document: OutboundDocument
 

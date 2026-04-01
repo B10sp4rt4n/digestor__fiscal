@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
@@ -13,7 +15,7 @@ router = APIRouter(prefix="/v1/sync", tags=["sync-v1"])
 @router.post("/outbound", response_model=OutboundSyncResponse)
 def enqueue_outbound_sync(
     body: OutboundSyncRequest,
-    idempotency_key: str = Header(alias="Idempotency-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
@@ -22,9 +24,37 @@ def enqueue_outbound_sync(
     if body.contract_version != "v1.0":
         raise HTTPException(status_code=400, detail="contract_version no soportada.")
 
+    # Idempotency-Key es opcional; si no viene, se genera uno único
+    if not idempotency_key:
+        idempotency_key = f"auto-{secrets.token_hex(8)}"
+
     csf = db.query(CSF).filter(CSF.id == body.document.document_id).first()
     if not csf or csf.company_id != cid:
         raise HTTPException(status_code=404, detail="Documento no encontrado para el tenant.")
+
+    # Auto-completar campos desde la BD si el caller no los envió
+    if body.document.csf_hash is None:
+        body.document.csf_hash = csf.csf_hash or ""
+    if body.document.normalized_payload is None:
+        body.document.normalized_payload = {
+            "rfc": csf.rfc,
+            "razon_social": csf.razon_social,
+            "regimen": csf.regimen,
+            "cp": csf.cp,
+            "curp": csf.curp,
+            "id_cif": csf.id_cif,
+        }
+    if body.document.quality is None:
+        from app.schemas.sync_outbound import OutboundQuality
+        missing = [f for f, v in {
+            "rfc": csf.rfc, "razon_social": csf.razon_social,
+            "regimen": csf.regimen, "cp": csf.cp, "id_cif": csf.id_cif,
+        }.items() if not v]
+        body.document.quality = OutboundQuality(
+            required_fields_ok=len(missing) == 0,
+            score=round(1.0 - len(missing) / 5, 2),
+            missing_fields=missing,
+        )
 
     if csf.processing_status != "approved_for_sync":
         raise HTTPException(

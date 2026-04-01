@@ -51,6 +51,7 @@ class OutboundSyncStatusResponse(BaseModel):
     company_id: str
     document_id: str
     delivery_status: str
+    payload_preview: dict[str, Any] | None = None
     attempts: int
     last_error: str | None = None
     last_attempt_at: datetime | None = None

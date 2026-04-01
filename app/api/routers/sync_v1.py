@@ -1,4 +1,5 @@
 import secrets
+import json
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
@@ -103,11 +104,29 @@ def get_outbound_status(
     if not event:
         raise HTTPException(status_code=404, detail="Evento outbound no encontrado.")
 
+    payload_preview = None
+    try:
+        payload = json.loads(event.payload_json)
+        doc = payload.get("document") or {}
+        payload_preview = {
+            "event_type": payload.get("event_type"),
+            "event_time": payload.get("event_time"),
+            "document": {
+                "document_id": doc.get("document_id"),
+                "document_type": doc.get("document_type"),
+                "normalized_payload": doc.get("normalized_payload"),
+                "quality": doc.get("quality"),
+            },
+        }
+    except Exception:
+        payload_preview = None
+
     return OutboundSyncStatusResponse(
         event_id=event.event_id,
         company_id=event.company_id,
         document_id=event.document_id,
         delivery_status=event.delivery_status,
+        payload_preview=payload_preview,
         attempts=event.attempts,
         last_error=event.last_error,
         last_attempt_at=event.last_attempt_at,

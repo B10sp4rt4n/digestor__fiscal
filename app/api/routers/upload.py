@@ -22,6 +22,13 @@ from app.services import telemetry
 router = APIRouter(prefix="/upload", tags=["upload"])
 
 
+def _normalize_optional_company_id(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    if not normalized or normalized.lower() == "string":
+        return None
+    return normalized
+
+
 def _compute_processing_status(qr_valid: bool | None, source_filename: str | None) -> tuple[str, str | None]:
     if qr_valid is True:
         return "processed", None
@@ -141,7 +148,7 @@ async def upload_pdf(
     db: Session = Depends(get_db),
 ):
     t0 = time.monotonic()
-    cid = enforce_tenant_scope(ctx, company_id)
+    cid = enforce_tenant_scope(ctx, _normalize_optional_company_id(company_id))
     content = await file.read()
 
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -200,7 +207,7 @@ async def upload_zip(
     db: Session = Depends(get_db),
 ):
     t0 = time.monotonic()
-    cid = enforce_tenant_scope(ctx, company_id)
+    cid = enforce_tenant_scope(ctx, _normalize_optional_company_id(company_id))
     content = await file.read()
 
     if not file.filename or not file.filename.lower().endswith(".zip"):

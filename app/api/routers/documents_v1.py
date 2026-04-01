@@ -14,6 +14,13 @@ from app.services.document_queue import DocumentTask, document_queue
 router = APIRouter(prefix="/v1/documents", tags=["documents-v1"])
 
 
+def _normalize_optional_company_id(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    if not normalized or normalized.lower() == "string":
+        return None
+    return normalized
+
+
 @router.post("", response_model=UniversalDocumentResponse)
 async def ingest_document(
     file: UploadFile = File(...),
@@ -28,8 +35,9 @@ async def ingest_document(
 
     Devuelve job_id inmediatamente. Usa GET /v1/{job_id} para consultar progreso.
     """
-    # Normalizar: string vacío se trata igual que None
-    cid = enforce_tenant_scope(ctx, company_id or None)
+    # Swagger suele enviar company_id="string" para campos opcionales.
+    # Lo tratamos como no informado para evitar errores falsos de tenant.
+    cid = enforce_tenant_scope(ctx, _normalize_optional_company_id(company_id))
 
     if document_type != "csf":
         raise HTTPException(status_code=400, detail="document_type no soportado. Usa 'csf'.")

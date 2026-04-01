@@ -28,7 +28,8 @@ async def ingest_document(
 
     Devuelve job_id inmediatamente. Usa GET /v1/{job_id} para consultar progreso.
     """
-    cid = enforce_tenant_scope(ctx, company_id)
+    # Normalizar: string vacío se trata igual que None
+    cid = enforce_tenant_scope(ctx, company_id or None)
 
     if document_type != "csf":
         raise HTTPException(status_code=400, detail="document_type no soportado. Usa 'csf'.")
@@ -131,9 +132,11 @@ def approve_document_for_sync(
     if not row:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
 
-    cid = enforce_tenant_scope(ctx, body.company_id or row.company_id)
-    if row.company_id != cid:
-        raise HTTPException(status_code=403, detail="No puedes aprobar documentos de otro tenant.")
+    # Siempre validamos acceso usando el company_id del documento.
+    # Ignoramos body.company_id para evitar errores cuando Swagger envía el valor de ejemplo.
+    if not can_access_tenant(ctx, row.company_id):
+        raise HTTPException(status_code=403, detail="No puedes acceder a este documento.")
+    cid = row.company_id
 
     required_fields = {
         "tax_id": bool((row.rfc or "").strip()),

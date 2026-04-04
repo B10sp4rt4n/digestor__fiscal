@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     TIMBRACFDI_BASE_URL: str = "https://pruebas.timbracfdi33.mx:1444/api/v2"
     TIMBRACFDI_TOKEN: Optional[str] = None
     TIMBRACFDI_TIMEOUT: int = 45
+    TIMBRACFDI_EMIT_OFFSET_HOURS: int = 5
 
     # Developer-led GTM
     DEVELOPER_PORTAL_ENABLED: bool = True

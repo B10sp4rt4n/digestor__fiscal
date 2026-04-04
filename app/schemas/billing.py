@@ -20,6 +20,11 @@ class TimbradoRequest(BaseModel):
     id_comprobante: str | None = Field(default=None, description="Id interno opcional para soporte")
 
 
+class TimbradoDemoRequest(BaseModel):
+    folio: str | None = Field(default=None, description="Folio opcional para el CFDI demo")
+    id_comprobante: str | None = Field(default=None, description="Id interno opcional para soporte")
+
+
 class RegistraEmisorRequest(BaseModel):
     rfc_emisor: str
     base64_cer: str

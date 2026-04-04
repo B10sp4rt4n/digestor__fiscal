@@ -6,6 +6,7 @@ from app.schemas.billing import (
     BillingProviderProxyResponse,
     BillingProviderStatusResponse,
     RegistraEmisorRequest,
+    TimbradoDemoRequest,
     TimbradoRequest,
 )
 from app.services import timbracfdi_client
@@ -60,6 +61,25 @@ def timbra_cfdi(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"No fue posible conectar con TimbraCFDI: {exc}") from exc
+
+    return BillingProviderProxyResponse(
+        ok=result["ok"],
+        remote_status_code=result["status_code"],
+        provider_response=result["provider_response"],
+    )
+
+
+@router.post("/timbracfdi/timbra-demo", response_model=BillingProviderProxyResponse)
+def timbra_demo_cfdi(
+    body: TimbradoDemoRequest,
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
+):
+    try:
+        result = timbracfdi_client.timbra_demo_cfdi(body.folio, body.id_comprobante)
+    except TimbraCFDIConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No fue posible ejecutar el demo de timbrado: {exc}") from exc
 
     return BillingProviderProxyResponse(
         ok=result["ok"],

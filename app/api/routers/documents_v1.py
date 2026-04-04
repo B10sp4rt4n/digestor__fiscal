@@ -21,12 +21,17 @@ def _normalize_optional_company_id(value: str | None) -> str | None:
     return normalized
 
 
-@router.post("", response_model=UniversalDocumentResponse)
+@router.post(
+    "",
+    response_model=UniversalDocumentResponse,
+    summary="1) Subir documento para procesamiento",
+    description="Sube un PDF de CSF. En Swagger deja `company_id` vacío; el tenant se toma del token automáticamente.",
+)
 async def ingest_document(
-    file: UploadFile = File(...),
-    document_type: str = Form(default="csf"),
-    company_id: str = Form(default=None),
-    validate_online: bool = Form(default=False),
+    file: UploadFile = File(..., description="Archivo PDF de la constancia o documento fiscal."),
+    document_type: str = Form(default="csf", description="Tipo de documento. Para este flujo usa `csf`.", examples=["csf"]),
+    company_id: str | None = Form(default=None, description="Opcional. Déjalo vacío en Swagger; el tenant se resuelve desde tu token.", examples=[""]),
+    validate_online: bool = Form(default=False, description="Si true, intenta validación online adicional."),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
     request: Request = None,
@@ -91,7 +96,12 @@ async def ingest_document(
     )
 
 
-@router.get("/{job_id}", response_model=UniversalDocumentResponse)
+@router.get(
+    "/{job_id}",
+    response_model=UniversalDocumentResponse,
+    summary="2) Consultar estado del job",
+    description="Pega aquí el `job_id` que te devolvió el upload. Cuando el status sea `done`, copia el `document_id`.",
+)
 def get_job_status(
     job_id: str,
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
@@ -129,7 +139,12 @@ def get_job_status(
     )
 
 
-@router.post("/{document_id}/approve", response_model=DocumentApproveResponse)
+@router.post(
+    "/{document_id}/approve",
+    response_model=DocumentApproveResponse,
+    summary="3) Aprobar documento para sincronización",
+    description="Pega el `document_id` y deja el body como `{}` o solo manda `notes`. No necesitas enviar `company_id`.",
+)
 def approve_document_for_sync(
     document_id: str,
     body: DocumentApproveRequest,

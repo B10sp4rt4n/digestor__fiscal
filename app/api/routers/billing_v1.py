@@ -15,7 +15,12 @@ from app.services.timbracfdi_client import TimbraCFDIConfigurationError
 router = APIRouter(prefix="/v1/billing", tags=["billing-v1"])
 
 
-@router.get("/provider/status", response_model=BillingProviderStatusResponse)
+@router.get(
+    "/provider/status",
+    response_model=BillingProviderStatusResponse,
+    summary="Verificar conexión con proveedor de timbrado",
+    description="Confirma si TimbraCFDI está configurado y, si `probe=true`, intenta una llamada real al sandbox.",
+)
 def get_billing_provider_status(
     probe: bool = Query(default=True, description="Si true, intenta una llamada real al sandbox del proveedor."),
     ctx: SecurityContext = Depends(role_guard("admin", "superadmin")),
@@ -50,7 +55,12 @@ def get_billing_provider_status(
     return response
 
 
-@router.post("/timbracfdi/timbra", response_model=BillingProviderProxyResponse)
+@router.post(
+    "/timbracfdi/timbra",
+    response_model=BillingProviderProxyResponse,
+    summary="Timbrar CFDI enviando XML en Base64",
+    description="Usa este endpoint cuando ya tengas tu XML CFDI armado y solo quieras enviarlo al PAC de pruebas.",
+)
 def timbra_cfdi(
     body: TimbradoRequest,
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
@@ -69,7 +79,12 @@ def timbra_cfdi(
     )
 
 
-@router.post("/timbracfdi/timbra-demo", response_model=BillingProviderProxyResponse)
+@router.post(
+    "/timbracfdi/timbra-demo",
+    response_model=BillingProviderProxyResponse,
+    summary="Timbrado demo sandbox listo para Swagger",
+    description="Genera internamente un CFDI demo válido para pruebas y lo timbra en el sandbox de TimbraCFDI. Puedes mandar `{}`.",
+)
 def timbra_demo_cfdi(
     body: TimbradoDemoRequest,
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
@@ -88,7 +103,12 @@ def timbra_demo_cfdi(
     )
 
 
-@router.post("/timbracfdi/registra-emisor", response_model=BillingProviderProxyResponse)
+@router.post(
+    "/timbracfdi/registra-emisor",
+    response_model=BillingProviderProxyResponse,
+    summary="Registrar emisor ante el PAC de pruebas",
+    description="Registra o actualiza el emisor usando RFC, certificado `.cer`, llave `.key` y contraseña en Base64.",
+)
 def registra_emisor(
     body: RegistraEmisorRequest,
     ctx: SecurityContext = Depends(role_guard("admin", "superadmin")),

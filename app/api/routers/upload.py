@@ -138,12 +138,17 @@ def _persist_csf(data: dict, db: Session, pdf_bytes: bytes | None = None) -> tup
         return existing, False
 
 
-@router.post("/pdf", response_model=UploadResult)
+@router.post(
+    "/pdf",
+    response_model=UploadResult,
+    summary="Subir un PDF CSF (legacy)",
+    description="Carga directa de una constancia. En Swagger deja `company_id` vacío para usar el tenant del token.",
+)
 async def upload_pdf(
-    file: UploadFile = File(...),
-    company_id: str = Form(default=None),
-    qr_text: str = Form(default=None),
-    validate_online: bool = Form(default=False),
+    file: UploadFile = File(..., description="Archivo PDF de la constancia fiscal."),
+    company_id: str | None = Form(default=None, description="Opcional. Déjalo vacío en Swagger.", examples=[""]),
+    qr_text: str | None = Form(default=None, description="Texto QR opcional si ya lo tienes extraído."),
+    validate_online: bool = Form(default=False, description="Si true, intenta validación online adicional."),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
@@ -198,11 +203,16 @@ async def upload_pdf(
     )
 
 
-@router.post("/zip", response_model=List[UploadResult])
+@router.post(
+    "/zip",
+    response_model=List[UploadResult],
+    summary="Subir ZIP con múltiples CSF (legacy)",
+    description="Carga masiva de constancias. En Swagger deja `company_id` vacío para usar el tenant del token.",
+)
 async def upload_zip(
-    file: UploadFile = File(...),
-    company_id: str = Form(default=None),
-    validate_online: bool = Form(default=False),
+    file: UploadFile = File(..., description="Archivo ZIP con múltiples PDFs CSF."),
+    company_id: str | None = Form(default=None, description="Opcional. Déjalo vacío en Swagger.", examples=[""]),
+    validate_online: bool = Form(default=False, description="Si true, intenta validación online adicional."),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):

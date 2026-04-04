@@ -6,8 +6,14 @@ from pydantic import BaseModel, Field
 
 
 class DocumentApproveRequest(BaseModel):
-    company_id: str | None = None
-    notes: str | None = None
+    company_id: str | None = Field(default=None, description="Opcional. Déjalo vacío en Swagger; el tenant se detecta desde el documento.")
+    notes: str | None = Field(default=None, description="Notas opcionales de aprobación.")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {}
+        }
+    }
 
 
 class DocumentApproveResponse(BaseModel):
@@ -24,20 +30,30 @@ class OutboundQuality(BaseModel):
 
 
 class OutboundDocument(BaseModel):
-    document_id: str
-    document_type: str = "csf"
-    csf_hash: str | None = None
-    normalized_payload: dict[str, Any] | None = None
-    quality: OutboundQuality | None = None
+    document_id: str = Field(description="UUID del documento ya aprobado para sync.")
+    document_type: str = Field(default="csf", description="Tipo de documento. Para este flujo usa 'csf'.")
+    csf_hash: str | None = Field(default=None, description="Opcional. Se auto-completa desde BD si lo omites.")
+    normalized_payload: dict[str, Any] | None = Field(default=None, description="Opcional. Se auto-completa desde BD si lo omites.")
+    quality: OutboundQuality | None = Field(default=None, description="Opcional. Se auto-completa desde BD si lo omites.")
 
 
 class OutboundSyncRequest(BaseModel):
-    contract_version: str = "v1.0"
-    event_type: str = "csf_sync"
-    event_id: str = Field(default_factory=lambda: f"evt-{secrets.token_hex(6)}")
-    event_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    company_id: str | None = None
+    contract_version: str = Field(default="v1.0", description="Versión del contrato. Déjalo como v1.0.")
+    event_type: str = Field(default="csf_sync", description="Tipo de evento. Por defecto csf_sync.")
+    event_id: str = Field(default_factory=lambda: f"evt-{secrets.token_hex(6)}", description="Opcional. Se genera automáticamente si no lo mandas.")
+    event_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Opcional. Se genera automáticamente en UTC.")
+    company_id: str | None = Field(default=None, description="Opcional. Déjalo vacío para usar el tenant del token.")
     document: OutboundDocument
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "document": {
+                    "document_id": "UUID_DEL_DOCUMENTO_APROBADO"
+                }
+            }
+        }
+    }
 
 
 class OutboundSyncResponse(BaseModel):

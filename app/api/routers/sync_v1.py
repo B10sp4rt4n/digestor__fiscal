@@ -13,10 +13,15 @@ from app.services import audit_service, sync_outbound_service
 router = APIRouter(prefix="/v1/sync", tags=["sync-v1"])
 
 
-@router.post("/outbound", response_model=OutboundSyncResponse)
+@router.post(
+    "/outbound",
+    response_model=OutboundSyncResponse,
+    summary="4) Enviar documento aprobado al flujo outbound",
+    description="Puedes mandar solo `document.document_id`. El resto se auto-completa desde la BD y `Idempotency-Key` es opcional.",
+)
 def enqueue_outbound_sync(
     body: OutboundSyncRequest,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", description="Opcional. Si lo omites, se genera automáticamente.", examples=["demo-key-001"]),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
@@ -92,7 +97,12 @@ def enqueue_outbound_sync(
     )
 
 
-@router.get("/outbound/{event_id}", response_model=OutboundSyncStatusResponse)
+@router.get(
+    "/outbound/{event_id}",
+    response_model=OutboundSyncStatusResponse,
+    summary="5) Consultar estado y evidencia del outbound",
+    description="Devuelve el estado (`queued`, `delivered`, etc.) y un `payload_preview` con el contenido realmente enviado.",
+)
 def get_outbound_status(
     event_id: str,
     company_id: str | None = None,

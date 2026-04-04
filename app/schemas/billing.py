@@ -19,10 +19,25 @@ class TimbradoRequest(BaseModel):
     xml_base64: str = Field(description="XML CFDI codificado en Base64")
     id_comprobante: str | None = Field(default=None, description="Id interno opcional para soporte")
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "xml_base64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4uLi4=",
+                "id_comprobante": "venta-001"
+            }
+        }
+    }
+
 
 class TimbradoDemoRequest(BaseModel):
     folio: str | None = Field(default=None, description="Folio opcional para el CFDI demo")
     id_comprobante: str | None = Field(default=None, description="Id interno opcional para soporte")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {}
+        }
+    }
 
 
 class RegistraEmisorRequest(BaseModel):
@@ -30,6 +45,17 @@ class RegistraEmisorRequest(BaseModel):
     base64_cer: str
     base64_key: str
     contrasena: str
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "rfc_emisor": "IIA040805DZ4",
+                "base64_cer": "BASE64_DEL_CER",
+                "base64_key": "BASE64_DEL_KEY",
+                "contrasena": "12345678a"
+            }
+        }
+    }
 
 
 class BillingProviderProxyResponse(BaseModel):

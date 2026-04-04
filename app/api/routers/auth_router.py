@@ -25,6 +25,15 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "username": "demo_prueba_01",
+                "password": "Demo12345A"
+            }
+        }
+    }
+
 
 class RegisterRequest(BaseModel):
     username: str
@@ -60,6 +69,15 @@ class TokenResponse(BaseModel):
 class SandboxSignupRequest(BaseModel):
     username: str | None = None
     password: str | None = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "username": "demo_prueba_01",
+                "password": "Demo12345A"
+            }
+        }
+    }
 
 
 class SandboxSignupResponse(BaseModel):

@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     SYNC_OUTBOUND_MAX_ATTEMPTS: int = 6
     SYNC_OUTBOUND_ALLOW_NOOP_TARGET: bool = True
 
+    # Facturación / Timbrado CFDI (sandbox)
+    TIMBRACFDI_BASE_URL: str = "https://pruebas.timbracfdi33.mx:1444/api/v2"
+    TIMBRACFDI_TOKEN: Optional[str] = None
+    TIMBRACFDI_TIMEOUT: int = 45
+
     # Developer-led GTM
     DEVELOPER_PORTAL_ENABLED: bool = True
     DEVELOPER_SANDBOX_ENABLED: bool = True

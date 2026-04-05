@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+import base64
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.core.auth import SecurityContext, role_guard
 from app.core.config import settings
@@ -104,14 +106,58 @@ def timbra_demo_cfdi(
 
 
 @router.post(
+    "/timbracfdi/registra-emisor-files",
+    response_model=BillingProviderProxyResponse,
+    summary="Registrar emisor subiendo .cer y .key desde Swagger",
+    description="Sube el archivo `.cer`, el archivo `.key` y la contraseña. La API los convierte a Base64 y llama al PAC automáticamente. **Usa certificados CSD, no FIEL**.",
+)
+async def registra_emisor_files(
+    rfc_emisor: str = Form(..., description="RFC del emisor a registrar en el PAC."),
+    contrasena: str = Form(..., description="Contraseña de la llave privada (`.key`)."),
+    cer_file: UploadFile = File(..., description="Archivo `.cer` del emisor."),
+    key_file: UploadFile = File(..., description="Archivo `.key` del emisor."),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
+):
+    cer_name = (cer_file.filename or "").lower()
+    key_name = (key_file.filename or "").lower()
+    if not cer_name.endswith(".cer"):
+        raise HTTPException(status_code=400, detail="`cer_file` debe ser un archivo .cer")
+    if not key_name.endswith(".key"):
+        raise HTTPException(status_code=400, detail="`key_file` debe ser un archivo .key")
+
+    cer_bytes = await cer_file.read()
+    key_bytes = await key_file.read()
+    if not cer_bytes or not key_bytes:
+        raise HTTPException(status_code=400, detail="Los archivos `.cer` y `.key` no pueden venir vacíos.")
+
+    try:
+        result = timbracfdi_client.registra_emisor(
+            rfc_emisor=rfc_emisor,
+            base64_cer=base64.b64encode(cer_bytes).decode("ascii"),
+            base64_key=base64.b64encode(key_bytes).decode("ascii"),
+            contrasena=contrasena,
+        )
+    except TimbraCFDIConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"No fue posible registrar el emisor en TimbraCFDI: {exc}") from exc
+
+    return BillingProviderProxyResponse(
+        ok=result["ok"],
+        remote_status_code=result["status_code"],
+        provider_response=result["provider_response"],
+    )
+
+
+@router.post(
     "/timbracfdi/registra-emisor",
     response_model=BillingProviderProxyResponse,
     summary="Registrar emisor ante el PAC de pruebas",
-    description="Registra o actualiza el emisor usando RFC, certificado `.cer`, llave `.key` y contraseña en Base64.",
+    description="Registra o actualiza el emisor usando RFC, certificado `.cer`, llave `.key` y contraseña en Base64. **Usa certificados CSD, no FIEL**.",
 )
 def registra_emisor(
     body: RegistraEmisorRequest,
-    ctx: SecurityContext = Depends(role_guard("admin", "superadmin")),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
 ):
     try:
         result = timbracfdi_client.registra_emisor(

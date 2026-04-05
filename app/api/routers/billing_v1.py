@@ -23,7 +23,7 @@ router = APIRouter(prefix="/v1/billing", tags=["billing-v1"])
 )
 def get_billing_provider_status(
     probe: bool = Query(default=True, description="Si true, intenta una llamada real al sandbox del proveedor."),
-    ctx: SecurityContext = Depends(role_guard("admin", "superadmin")),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
 ):
     configured = timbracfdi_client.is_configured()
     token_present = bool((settings.TIMBRACFDI_TOKEN or "").strip())

@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from sqlalchemy import Boolean, Column, LargeBinary, String, Integer, DateTime, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -29,5 +30,11 @@ class CSF(Base):
     csf_hash = Column(String, unique=True, nullable=False)
     version = Column(Integer, default=1)
     pdf_content = Column(LargeBinary, nullable=True)
+
+    # Campos IA — datos CRM completos y correcciones persistidas
+    crm_autofill = Column(JSONB, nullable=True)
+    ai_field_corrections = Column(JSONB, nullable=True)
+    corrected_json = Column(JSONB, nullable=True)
+    field_validation = Column(JSONB, nullable=True)
 
     eventos = relationship("EventoFacturacion", back_populates="csf")

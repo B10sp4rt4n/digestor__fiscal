@@ -39,8 +39,31 @@ def _compute_processing_status(qr_valid: bool | None, source_filename: str | Non
     return "incomplete", "missing_source_file"
 
 
+def _apply_ai_corrections_to_main_fields(data: dict) -> None:
+    """Aplica correcciones de alta confianza del corrected_json a los campos principales."""
+    corrected = data.get("corrected_json")
+    if not corrected:
+        return
+    # Mapeo de campo CRM → campo CSF principal
+    field_map = {
+        "tax_id": "rfc",
+        "legal_name": "razon_social",
+        "tax_regime": "regimen",
+        "postal_code": "cp",
+        "curp": "curp",
+        "cif_id": "id_cif",
+    }
+    for crm_field, csf_field in field_map.items():
+        corrected_val = (corrected.get(crm_field) or "").strip()
+        if corrected_val:
+            data[csf_field] = corrected_val
+
+
 def _persist_csf(data: dict, db: Session, pdf_bytes: bytes | None = None) -> tuple[CSF, bool]:
     """Inserta o recupera CSF por hash. Retorna (csf, created)."""
+    # Aplica correcciones IA de alta confianza a los campos principales antes de guardar.
+    _apply_ai_corrections_to_main_fields(data)
+
     # Evita colisiones entre tenants para el mismo documento.
     # El hash almacenado queda aislado por company_id para mantener deduplicacion local al tenant.
     raw_hash = data["csf_hash"]
@@ -89,6 +112,19 @@ def _persist_csf(data: dict, db: Session, pdf_bytes: bytes | None = None) -> tup
         if data.get("parser_source") and existing.parser_source != data["parser_source"]:
             existing.parser_source = data["parser_source"]
             updated = True
+        # Persistir datos IA (siempre sobreescribe si vienen nuevos)
+        if data.get("crm_autofill") is not None:
+            existing.crm_autofill = data["crm_autofill"]
+            updated = True
+        if data.get("ai_field_corrections") is not None:
+            existing.ai_field_corrections = data["ai_field_corrections"]
+            updated = True
+        if data.get("corrected_json") is not None:
+            existing.corrected_json = data["corrected_json"]
+            updated = True
+        if data.get("field_validation") is not None:
+            existing.field_validation = data["field_validation"]
+            updated = True
         status, reason = _compute_processing_status(existing.qr_valid, existing.source_filename)
         if not updated:
             status = "duplicate"
@@ -126,6 +162,10 @@ def _persist_csf(data: dict, db: Session, pdf_bytes: bytes | None = None) -> tup
         csf_hash=data["csf_hash"],
         version=1,
         pdf_content=pdf_bytes,
+        crm_autofill=data.get("crm_autofill"),
+        ai_field_corrections=data.get("ai_field_corrections"),
+        corrected_json=data.get("corrected_json"),
+        field_validation=data.get("field_validation"),
     )
     try:
         db.add(csf)

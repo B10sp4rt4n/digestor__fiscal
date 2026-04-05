@@ -121,11 +121,14 @@ def get_csf(
         raise HTTPException(status_code=403, detail="No puedes acceder a otro tenant.")
 
     data = CSFOut.model_validate(row).model_dump()
-    data["crm_autofill"] = None
+
+    # Usar datos persistidos si existen; solo re-computar si no hay datos guardados.
+    has_stored_ai = row.crm_autofill is not None
+    data["crm_autofill"] = row.crm_autofill
+    data["ai_field_corrections"] = row.ai_field_corrections or []
+    data["corrected_json"] = row.corrected_json
+    data["field_validation"] = row.field_validation or []
     data["geolocation"] = None
-    data["ai_field_corrections"] = []
-    data["corrected_json"] = None
-    data["field_validation"] = []
 
     if include_geo or include_ai_corrections:
         parsed_pairs = ingest._extract_colon_pairs(row.extracted_text or "")
@@ -140,35 +143,54 @@ def get_csf(
         }
         crm = ingest._build_crm_autofill(field_map, parsed_pairs)
         crm_complete = ingest._build_crm_autofill(field_map, parsed_pairs, include_empty=True)
-        geo = None
+
+        if not has_stored_ai:
+            data["crm_autofill"] = crm or None
 
         if include_geo:
             geo = ingest._resolve_geolocation(row.cp, crm)
             if geo:
+                stored_crm = data.get("crm_autofill") or {}
                 if geo.get("latitude") is not None:
-                    crm.setdefault("geo_latitude", str(geo["latitude"]))
+                    stored_crm.setdefault("geo_latitude", str(geo["latitude"]))
                 if geo.get("longitude") is not None:
-                    crm.setdefault("geo_longitude", str(geo["longitude"]))
+                    stored_crm.setdefault("geo_longitude", str(geo["longitude"]))
                 if geo.get("city"):
-                    crm.setdefault("geo_city", geo["city"])
+                    stored_crm.setdefault("geo_city", geo["city"])
                 if geo.get("state"):
-                    crm.setdefault("geo_state", geo["state"])
+                    stored_crm.setdefault("geo_state", geo["state"])
+            data["geolocation"] = geo
 
-        data["crm_autofill"] = crm or None
-        data["geolocation"] = geo
-        if include_ai_corrections and crm:
-            data["ai_field_corrections"] = ingest._suggest_field_corrections(
+        if include_ai_corrections and not has_stored_ai:
+            # Solo re-computa IA si NO hay datos guardados
+            ai_corrections = ingest._suggest_field_corrections(
                 crm_complete,
                 row.extracted_text or "",
             )
-            data["corrected_json"] = ingest._build_corrected_json(
+            corrected = ingest._build_corrected_json(
+                crm_complete,
+                ai_corrections,
+            )
+            validation = ingest._build_field_validation_report(
+                crm_complete,
+                ai_corrections,
+            )
+            data["ai_field_corrections"] = ai_corrections
+            data["corrected_json"] = corrected
+            data["field_validation"] = validation
+            # Persistir para futuras consultas
+            row.crm_autofill = crm or None
+            row.ai_field_corrections = ai_corrections
+            row.corrected_json = corrected
+            row.field_validation = validation
+            db.commit()
+            db.refresh(row)
+        elif not has_stored_ai:
+            data["field_validation"] = ingest._build_field_validation_report(
                 crm_complete,
                 data["ai_field_corrections"],
             )
-        data["field_validation"] = ingest._build_field_validation_report(
-            crm_complete,
-            data["ai_field_corrections"],
-        )
+
     return data
 
 

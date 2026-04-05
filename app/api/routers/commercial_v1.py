@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -36,6 +37,39 @@ router = APIRouter(tags=["commercial-v1"])
 
 def _money(value: float | int | None) -> float:
     return float(Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+_REGIMEN_TEXT_TO_CODE = {
+    "general de ley personas morales": "601",
+    "personas morales con fines no lucrativos": "603",
+    "sueldos y salarios": "605",
+    "arrendamiento": "606",
+    "demas ingresos": "608",
+    "residentes en el extranjero": "610",
+    "personas fisicas con actividades empresariales y profesionales": "612",
+    "sin obligaciones fiscales": "616",
+    "incorporacion fiscal": "621",
+    "actividades agricolas ganaderas silvicolas y pesqueras": "622",
+    "coordinados": "624",
+    "regimen simplificado de confianza": "626",
+}
+
+
+def _normalize_regimen_code(raw: str) -> str:
+    val = (raw or "").strip()
+    if not val:
+        return ""
+    m = re.match(r"^(\d{3})", val)
+    if m:
+        return m.group(1)
+    normalized = re.sub(r"[^a-z ]", "", val.lower().replace("\xe9", "e").replace("\xe1", "a").replace("\xed", "i").replace("\xf3", "o").replace("\xfa", "u")).strip()
+    if normalized.startswith("regimen "):
+        normalized = normalized[len("regimen "):].strip()
+    normalized = re.sub(r"^del?\s+", "", normalized)
+    for text, code in _REGIMEN_TEXT_TO_CODE.items():
+        if text in normalized or normalized in text:
+            return code
+    return val
 
 
 def _rate(value: float | int | None) -> float:
@@ -352,7 +386,7 @@ def _build_cfdi_xml(draft: BillingDraft) -> str:
     customer_rfc = (draft.customer_rfc or "").strip().upper()
     customer_name = (draft.customer_name or "").strip()
     customer_zip = (draft.customer_zip or "").strip()
-    customer_regimen = (draft.customer_regimen or "").strip()
+    customer_regimen = _normalize_regimen_code((draft.customer_regimen or "").strip())
     customer_use_cfdi = (draft.customer_use_cfdi or "G03").strip()
     informacion_global_xml = ""
     if customer_rfc in {"XAXX010101000", "XEXX010101000"}:
@@ -409,7 +443,7 @@ def _build_cfdi_xml(draft: BillingDraft) -> str:
     xml = f"""<?xml version=\"1.0\" encoding=\"utf-8\"?>
 <cfdi:Comprobante xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:cfdi=\"http://www.sat.gob.mx/cfd/4\" Moneda=\"{escape(draft.currency or 'MXN', quote=True)}\" Total=\"{draft.total:.2f}\" xsi:schemaLocation=\"http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd\" Exportacion=\"01\" MetodoPago=\"{escape(draft.payment_method or 'PUE', quote=True)}\" TipoDeComprobante=\"I\" SubTotal=\"{draft.subtotal:.2f}\" FormaPago=\"{escape(draft.payment_form or '01', quote=True)}\" LugarExpedicion=\"{escape(draft.place_of_issue or '32690', quote=True)}\" Fecha=\"{fecha}\" Folio=\"{escape(folio, quote=True)}\"{serie_attr} Version=\"4.0\">
   {informacion_global_xml}
-  <cfdi:Emisor Rfc=\"{escape(draft.emitter_rfc or '', quote=True)}\" Nombre=\"{escape(draft.emitter_name or '', quote=True)}\" RegimenFiscal=\"{escape(draft.emitter_regimen or '', quote=True)}\" />
+  <cfdi:Emisor Rfc=\"{escape(draft.emitter_rfc or '', quote=True)}\" Nombre=\"{escape(draft.emitter_name or '', quote=True)}\" RegimenFiscal=\"{escape(_normalize_regimen_code(draft.emitter_regimen or ''), quote=True)}\" />
   <cfdi:Receptor Rfc=\"{escape(customer_rfc, quote=True)}\" Nombre=\"{escape(customer_name, quote=True)}\" DomicilioFiscalReceptor=\"{escape(customer_zip, quote=True)}\" RegimenFiscalReceptor=\"{escape(customer_regimen, quote=True)}\" UsoCFDI=\"{escape(customer_use_cfdi, quote=True)}\" />
   <cfdi:Conceptos>{''.join(concepts_xml)}
   </cfdi:Conceptos>

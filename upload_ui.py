@@ -1,6 +1,10 @@
+import os
+from decimal import Decimal, ROUND_HALF_UP
+
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 import fitz
 
 from streamlit_cookies_controller import CookieController
@@ -8,7 +12,7 @@ from app.services.ingest import format_extracted_csf_text
 
 st.set_page_config(page_title="Digestor Fiscal", layout="wide")
 
-API = "http://localhost:8000"
+API = os.getenv("DIGESTOR_API_BASE_URL", "http://localhost:8000").rstrip("/")
 _COOKIE = "digestor_token"
 
 ctrl = CookieController()
@@ -373,7 +377,7 @@ with st.sidebar:
 # Alias para las variables que el resto del UI usa
 company_id = st.session_state["tenant_id"]
 
-tab_upload, tab_history, tab_dashboard = st.tabs(["Cargar documento", "Historial", "Dashboard"])
+tab_upload, tab_history, tab_commercial, tab_dashboard = st.tabs(["Cargar documento", "Historial", "Demo comercial viva", "Dashboard"])
 
 with tab_upload:
     archivo = st.file_uploader("Selecciona tu CSF (.pdf o .zip)", type=["pdf", "zip"])
@@ -705,6 +709,396 @@ with tab_history:
                 st.info("No hay constancias registradas para este company_id.")
         else:
             st.error(f"No se pudo cargar el historial: {resp.text}")
+
+# ─────────────────────────────────────────
+#  DEMO COMERCIAL VIVA
+#  Pestaña autocontenida que toma la
+#  información ya recabada y simula una
+#  prefactura visual.  NO modifica el flujo
+#  de las demás pestañas.
+# ─────────────────────────────────────────
+
+_PAYMENT_METHOD_OPTIONS = {
+    "PUE": "Pago en una sola exhibición",
+    "PPD": "Pago en parcialidades o diferido",
+}
+_PAYMENT_FORM_OPTIONS = {
+    "01": "Efectivo",
+    "03": "Transferencia electrónica",
+    "04": "Tarjeta de crédito",
+    "28": "Tarjeta de débito",
+    "99": "Por definir",
+}
+_CFDI_USE_OPTIONS = {
+    "G01": "Adquisición de mercancías",
+    "G03": "Gastos en general",
+    "P01": "Por definir",
+    "S01": "Sin efectos fiscales",
+}
+
+
+_REGIMEN_TEXT_TO_CODE = {
+    "general de ley personas morales": "601",
+    "personas morales con fines no lucrativos": "603",
+    "sueldos y salarios": "605",
+    "arrendamiento": "606",
+    "regimen de enajenacion o adquisicion de bienes": "607",
+    "demas ingresos": "608",
+    "consolidacion": "609",
+    "residentes en el extranjero sin establecimiento permanente en mexico": "610",
+    "ingresos por dividendos": "611",
+    "personas fisicas con actividades empresariales y profesionales": "612",
+    "ingresos por intereses": "614",
+    "regimen de los ingresos por obtencion de premios": "615",
+    "sin obligaciones fiscales": "616",
+    "sociedades cooperativas de produccion": "620",
+    "incorporacion fiscal": "621",
+    "actividades agricolas ganaderas silvicolas y pesqueras": "622",
+    "opcional para grupos de sociedades": "623",
+    "coordinados": "624",
+    "regimen de las actividades empresariales con ingresos a traves de plataformas tecnologicas": "625",
+    "regimen simplificado de confianza": "626",
+}
+
+
+def _normalize_regimen_code(raw: str) -> str:
+    """Extrae el código SAT numérico de un campo de régimen (acepta '601', 'Régimen General...', etc)."""
+    val = (raw or "").strip()
+    if not val:
+        return ""
+    import re
+    m = re.match(r"^(\d{3})", val)
+    if m:
+        return m.group(1)
+    normalized = re.sub(r"[^a-z ]", "", val.lower().replace("é", "e").replace("á", "a").replace("í", "i").replace("ó", "o").replace("ú", "u")).strip()
+    if normalized.startswith("regimen "):
+        normalized = normalized[len("regimen "):].strip()
+    if normalized.startswith("de ") or normalized.startswith("del "):
+        normalized = re.sub(r"^del?\s+", "", normalized)
+    for text, code in _REGIMEN_TEXT_TO_CODE.items():
+        if text in normalized or normalized in text:
+            return code
+    return val
+
+
+def _money(value):
+    return float(Decimal(str(value or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _safe_error(resp):
+    try:
+        p = resp.json()
+    except ValueError:
+        return resp.text
+    if isinstance(p, dict):
+        d = p.get("detail")
+        if isinstance(d, dict):
+            return str(d.get("message") or d)
+        if d:
+            return str(d)
+    return str(p)
+
+
+def _suggest_cfdi_use(rfc):
+    r = (rfc or "").strip().upper()
+    if r in {"XAXX010101000", "XEXX010101000"}:
+        return "S01"
+    return "G03"
+
+
+with tab_commercial:
+    st.subheader("Demo comercial viva")
+    st.caption(
+        "Selecciona una constancia ya procesada en Historial, arma una combinación "
+        "de productos y genera la prefactura visual en tiempo real."
+    )
+
+    # ── 1) Elegir CSF ya procesada ──────────────────────
+    st.markdown("### 1) Selecciona la constancia del cliente")
+
+    try:
+        _demo_history = requests.get(
+            f"{API}/csf",
+            params={"company_id": company_id, "limit": 100},
+            headers=auth_headers(),
+            timeout=20,
+        )
+        _demo_items = _demo_history.json().get("items", []) if _demo_history.status_code == 200 else []
+    except requests.RequestException:
+        _demo_items = []
+
+    _demo_options = {
+        f"{r.get('rfc','?')} | {r.get('razon_social','?')} | {r.get('source_filename','—')}": r["id"]
+        for r in _demo_items
+    }
+
+    _demo_label = st.selectbox(
+        "Constancia normalizada",
+        options=["— elige una constancia —"] + list(_demo_options.keys()),
+        key="demo_csf_selector",
+    )
+
+    _demo_csf_id = _demo_options.get(_demo_label)
+    _demo_detail = st.session_state.get("demo_csf_detail")
+
+    if st.button("Cargar constancia", key="demo_load_csf", width="stretch"):
+        if not _demo_csf_id:
+            st.warning("Selecciona primero una constancia del listado.")
+        else:
+            with st.spinner("Cargando datos normalizados..."):
+                try:
+                    _dr = requests.get(
+                        f"{API}/csf/{_demo_csf_id}",
+                        params={"include_geo": "false", "include_ai_corrections": "false"},
+                        headers=auth_headers(),
+                        timeout=30,
+                    )
+                    if _dr.status_code == 200:
+                        st.session_state["demo_csf_detail"] = _dr.json()
+                        st.session_state["demo_csf_id"] = _demo_csf_id
+                        st.session_state.pop("demo_last_draft", None)
+                        st.session_state.pop("demo_preview_html", None)
+                        st.success("Constancia cargada")
+                        st.rerun()
+                    else:
+                        st.error(f"Error al cargar: {_safe_error(_dr)}")
+                except requests.RequestException as exc:
+                    st.error(f"Error de red: {exc}")
+
+    _demo_detail = st.session_state.get("demo_csf_detail")
+
+    if _demo_detail:
+        corrected = _demo_detail.get("corrected_json") or _demo_detail.get("crm_autofill") or {}
+        demo_rfc = (corrected.get("tax_id") or _demo_detail.get("rfc") or "").strip().upper()
+        demo_razon = corrected.get("legal_name") or _demo_detail.get("razon_social") or ""
+        demo_cp = corrected.get("postal_code") or _demo_detail.get("cp") or ""
+        demo_regimen = _normalize_regimen_code(_demo_detail.get("regimen") or corrected.get("tax_regime") or "")
+
+        if demo_rfc in {"XAXX010101000", "XEXX010101000"}:
+            demo_razon = "PUBLICO EN GENERAL"
+            demo_regimen = "616"
+            demo_cp = "32690"
+
+        m = st.columns(4)
+        m[0].metric("RFC", demo_rfc or "—")
+        m[1].metric("Razón social", demo_razon[:30] or "—")
+        m[2].metric("CP", demo_cp or "—")
+        m[3].metric("Parser", describe_parser_source(_demo_detail))
+
+        # ── Enriquecimiento opcional ────────────────────
+        enrich_left, enrich_right = st.columns(2)
+        if enrich_left.button("Enriquecer con IA + geolocalización", key="demo_enrich", width="stretch"):
+            with st.spinner("Enriqueciendo..."):
+                try:
+                    _er = requests.get(
+                        f"{API}/csf/{st.session_state['demo_csf_id']}",
+                        params={"include_geo": "true", "include_ai_corrections": "true"},
+                        headers=auth_headers(),
+                        timeout=120,
+                    )
+                    if _er.status_code == 200:
+                        st.session_state["demo_csf_detail"] = _er.json()
+                        st.success("Constancia enriquecida")
+                        st.rerun()
+                    else:
+                        st.warning(f"No se pudo enriquecer: {_safe_error(_er)}")
+                except requests.RequestException as exc:
+                    st.warning(f"Error de red: {exc}")
+
+        if enrich_right.button("Revalidar QR con SAT", key="demo_revalidate_qr", width="stretch"):
+            with st.spinner("Revalidando QR..."):
+                try:
+                    _qr = requests.post(
+                        f"{API}/csf/{st.session_state['demo_csf_id']}/revalidate",
+                        params={"validate_online": True},
+                        headers=auth_headers(),
+                        timeout=30,
+                    )
+                    if _qr.status_code == 200:
+                        st.success("QR revalidado")
+                        st.json(_qr.json())
+                    else:
+                        st.error(f"No se pudo revalidar: {_safe_error(_qr)}")
+                except requests.RequestException as exc:
+                    st.error(f"Error de red: {exc}")
+
+        with st.expander("Detalle normalizado / IA", expanded=False):
+            if _demo_detail.get("crm_autofill"):
+                st.json(_demo_detail["crm_autofill"], expanded=False)
+            if _demo_detail.get("ai_field_corrections"):
+                st.dataframe(pd.DataFrame(_demo_detail["ai_field_corrections"]), width="stretch", hide_index=True)
+            else:
+                st.caption("Sin sugerencias IA — los datos ya vienen limpios o el proveedor no está configurado.")
+            if _demo_detail.get("corrected_json"):
+                st.json(_demo_detail["corrected_json"], expanded=False)
+
+        # ── 2) Productos ────────────────────────────────
+        st.markdown("### 2) Arma la combinación de productos")
+        try:
+            _cat_resp = requests.get(
+                f"{API}/v1/catalog/products",
+                params={"company_id": company_id, "active_only": False},
+                headers=auth_headers(),
+                timeout=20,
+            )
+            _catalog = _cat_resp.json() if _cat_resp.status_code == 200 else []
+        except requests.RequestException:
+            _catalog = []
+
+        with st.expander("Alta rápida de producto", expanded=not bool(_catalog)):
+            with st.form("demo_quick_product"):
+                qc = st.columns([1.2, 2.2, 1, 1])
+                q_sku = qc[0].text_input("SKU", value="SERV-DEMO")
+                q_name = qc[1].text_input("Nombre", value="Consultoría estratégica")
+                q_price = qc[2].number_input("Precio", min_value=0.0, value=2500.0, step=100.0)
+                q_tax = qc[3].selectbox("IVA", [0.16, 0.0], format_func=lambda v: "16%" if v else "0%", key="demo_q_tax")
+                q_desc = st.text_input("Descripción", value="Servicio profesional recurrente")
+                if st.form_submit_button("Guardar en catálogo", width="stretch"):
+                    _qp = {
+                        "sku": q_sku.strip(), "name": q_name.strip(), "description": q_desc.strip() or None,
+                        "price": q_price, "currency": "MXN", "tax_rate": q_tax,
+                        "tax_object": "02" if q_tax else "01", "sat_product_code": "80101500",
+                        "unit_code": "E48", "unit_name": "Servicio", "is_active": True,
+                    }
+                    _qr2 = requests.post(f"{API}/v1/catalog/products", json=_qp, headers=auth_headers(), timeout=20)
+                    if _qr2.status_code == 200:
+                        st.success("Producto guardado")
+                        st.rerun()
+                    elif _qr2.status_code == 409:
+                        st.info("Ese SKU ya existe.")
+                    else:
+                        st.error(f"Error: {_safe_error(_qr2)}")
+
+        _line_items = []
+        _line_summary = []
+
+        if _catalog:
+            _prod_opts = {
+                f"{p.get('sku','?')} — {p.get('name','?')} (${float(p.get('price',0)):,.2f})": p
+                for p in _catalog if p.get("is_active", True)
+            }
+            _sel_labels = st.multiselect("Productos", list(_prod_opts.keys()), key="demo_sel_products")
+            for lbl in _sel_labels:
+                prod = _prod_opts[lbl]
+                st.markdown("---")
+                tc = st.columns([2.4, 1, 1, 1])
+                tc[0].markdown(f"**{prod.get('name')}**  \n`{prod.get('sku','?')}`")
+                qty = tc[1].number_input("Cant.", min_value=1.0, value=1.0, step=1.0, key=f"demo_qty_{prod['id']}")
+                price = tc[2].number_input("Precio", min_value=0.0, value=float(prod.get("price",0)), step=100.0, key=f"demo_price_{prod['id']}")
+                tax = tc[3].selectbox("IVA", [0.16, 0.0], index=0 if float(prod.get("tax_rate",0.16))>0 else 1, format_func=lambda v: "16%" if v else "0%", key=f"demo_tax_{prod['id']}")
+                desc = st.text_input("Descripción", value=prod.get("description") or prod.get("name",""), key=f"demo_desc_{prod['id']}")
+                sub = _money(qty * price)
+                iva = _money(sub * tax) if tax > 0 else 0.0
+                tot = _money(sub + iva)
+                st.caption(f"Subtotal ${sub:,.2f} • IVA ${iva:,.2f} • Total ${tot:,.2f}")
+                _line_items.append({"product_id": prod["id"], "description": desc, "quantity": qty, "unit_price": price, "tax_rate": tax, "tax_object": "02" if tax > 0 else "01"})
+                _line_summary.append({"SKU": prod.get("sku","—"), "Concepto": desc, "Cantidad": qty, "Precio": price, "Importe": sub, "IVA": iva, "Total": tot})
+        else:
+            st.info("No hay productos en catálogo. Crea uno con el alta rápida.")
+
+        with st.expander("Concepto libre (opcional)", expanded=False):
+            _manual = st.checkbox("Añadir concepto manual", key="demo_manual_on")
+            if _manual:
+                mc = st.columns([2.3, 1, 1, 1])
+                m_desc = mc[0].text_input("Concepto", key="demo_m_desc")
+                m_qty = mc[1].number_input("Cant.", min_value=1.0, value=1.0, step=1.0, key="demo_m_qty")
+                m_price = mc[2].number_input("Precio", min_value=0.0, value=1000.0, step=100.0, key="demo_m_price")
+                m_tax = mc[3].selectbox("IVA", [0.16, 0.0], format_func=lambda v: "16%" if v else "0%", key="demo_m_tax")
+                if m_desc.strip():
+                    ms = _money(m_qty * m_price)
+                    mi = _money(ms * m_tax) if m_tax > 0 else 0.0
+                    mt = _money(ms + mi)
+                    _line_items.append({"description": m_desc.strip(), "quantity": m_qty, "unit_price": m_price, "tax_rate": m_tax, "tax_object": "02" if m_tax > 0 else "01", "sat_product_code": "80101500", "unit_code": "E48"})
+                    _line_summary.append({"SKU": "LIBRE", "Concepto": m_desc.strip(), "Cantidad": m_qty, "Precio": m_price, "Importe": ms, "IVA": mi, "Total": mt})
+
+        if _line_summary:
+            st.dataframe(pd.DataFrame(_line_summary), width="stretch", hide_index=True)
+            sc = st.columns(3)
+            sc[0].metric("Subtotal", f"${_money(sum(i['Importe'] for i in _line_summary)):,.2f}")
+            sc[1].metric("IVA", f"${_money(sum(i['IVA'] for i in _line_summary)):,.2f}")
+            sc[2].metric("Total", f"${_money(sum(i['Total'] for i in _line_summary)):,.2f}")
+
+        # ── 3) Datos fiscales + prefactura ──────────────
+        st.markdown("### 3) Ajusta datos fiscales y genera la prefactura")
+
+        rc = st.columns(4)
+        _c_name = rc[0].text_input("Razón social receptor", value=demo_razon, key="demo_c_name")
+        _c_rfc = rc[1].text_input("RFC receptor", value=demo_rfc, key="demo_c_rfc")
+        _c_cp = rc[2].text_input("CP receptor", value=demo_cp, key="demo_c_cp")
+        _c_reg = rc[3].text_input("Régimen receptor", value=demo_regimen, key="demo_c_reg")
+
+        fc = st.columns(4)
+        _pay_method = fc[0].selectbox("Método de pago", list(_PAYMENT_METHOD_OPTIONS.keys()), format_func=lambda c: f"{c} — {_PAYMENT_METHOD_OPTIONS[c]}", key="demo_pay_method")
+        _pay_form = fc[1].selectbox("Forma de pago", list(_PAYMENT_FORM_OPTIONS.keys()), format_func=lambda c: f"{c} — {_PAYMENT_FORM_OPTIONS[c]}", key="demo_pay_form")
+        _use_cfdi = fc[2].selectbox("Uso CFDI", list(_CFDI_USE_OPTIONS.keys()), format_func=lambda c: f"{c} — {_CFDI_USE_OPTIONS[c]}", key="demo_use_cfdi", index=list(_CFDI_USE_OPTIONS.keys()).index(_suggest_cfdi_use(demo_rfc)))
+        _series = fc[3].text_input("Serie", value="PF", key="demo_series")
+
+        with st.expander("Datos del emisor", expanded=False):
+            st.caption("Para timbrar en sandbox se usa el RFC de pruebas del SAT (EKU9003173C9).")
+            ec = st.columns(4)
+            _e_rfc = ec[0].text_input("RFC emisor", value="EKU9003173C9", key="demo_e_rfc")
+            _e_name = ec[1].text_input("Nombre emisor", value="ESCUELA KEMPER URGATE", key="demo_e_name")
+            _e_reg = ec[2].text_input("Régimen emisor", value="601", key="demo_e_reg")
+            _e_place = ec[3].text_input("Lugar expedición", value="42501", key="demo_e_place")
+
+        _notes = st.text_area("Notas comerciales", value="Prefactura lista para revisión", key="demo_notes", height=80)
+
+        _can = bool(_demo_detail) and bool(_line_items)
+        if st.button("Generar prefactura visual", key="demo_gen_draft", width="stretch", disabled=not _can):
+            _draft_body = {
+                "customer_name": _c_name or None, "customer_rfc": _c_rfc or None,
+                "customer_zip": _c_cp or None, "customer_regimen": _c_reg or None,
+                "customer_use_cfdi": _use_cfdi or None,
+                "emitter_rfc": _e_rfc or None, "emitter_name": _e_name or None,
+                "emitter_regimen": _e_reg or None, "place_of_issue": _e_place or None,
+                "payment_method": _pay_method or "PUE", "payment_form": _pay_form or "01",
+                "series": _series or "PF", "notes": _notes or None,
+                "items": _line_items,
+            }
+            with st.spinner("Construyendo prefactura..."):
+                _dr2 = requests.post(f"{API}/v1/billing/drafts", json=_draft_body, headers=auth_headers(), timeout=45)
+            if _dr2.status_code == 200:
+                _draft = _dr2.json()
+                st.session_state["demo_last_draft"] = _draft
+                _prev = requests.get(f"{API}/v1/billing/drafts/{_draft['id']}/preview", params={"company_id": company_id}, headers=auth_headers(), timeout=20)
+                st.session_state["demo_preview_html"] = _prev.text if _prev.status_code == 200 else None
+                st.success("Prefactura lista")
+            else:
+                st.error(f"Error: {_safe_error(_dr2)}")
+
+        if not _can:
+            st.info("Necesitas una constancia seleccionada y al menos un producto/concepto.")
+
+        # ── 4) Vista previa + timbrado ──────────────────
+        _last_draft = st.session_state.get("demo_last_draft")
+        _preview_html = st.session_state.get("demo_preview_html")
+        if _last_draft:
+            st.markdown("### 4) Vista previa lista para presentar")
+            dc = st.columns(4)
+            dc[0].metric("Draft ID", _last_draft.get("id","—")[:8])
+            dc[1].metric("Estatus", _last_draft.get("status","—"))
+            dc[2].metric("Timbrable", "Sí" if _last_draft.get("ready_to_stamp") else "No")
+            dc[3].metric("Total", f"${float(_last_draft.get('total',0)):,.2f}")
+            if _preview_html:
+                components.html(_preview_html, height=900, scrolling=True)
+            if _last_draft.get("status") != "stamped":
+                if st.button("Timbrar en sandbox", key="demo_stamp", width="stretch"):
+                    with st.spinner("Timbrando..."):
+                        _sr = requests.post(
+                            f"{API}/v1/billing/drafts/{_last_draft['id']}/stamp",
+                            params={"company_id": company_id}, json={},
+                            headers=auth_headers(), timeout=120,
+                        )
+                    if _sr.status_code == 200:
+                        sp = _sr.json()
+                        st.session_state["demo_last_draft"] = sp.get("draft")
+                        st.success("Timbrada en sandbox")
+                        st.json(sp.get("provider_response"), expanded=False)
+                    else:
+                        st.error(f"Error: {_safe_error(_sr)}")
+
+    else:
+        st.info("Elige una constancia ya procesada del listado para comenzar la simulación.")
 
 with tab_dashboard:
     st.subheader("Resumen de constancias")

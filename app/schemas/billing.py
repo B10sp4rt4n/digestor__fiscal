@@ -5,9 +5,14 @@ from pydantic import BaseModel, Field
 
 class BillingProviderStatusResponse(BaseModel):
     provider: str = "timbracfdi"
+    environment: str = "sandbox"
     configured: bool
     base_url: str
     token_present: bool
+    sandbox_configured: bool = False
+    production_configured: bool = False
+    ready_for_live: bool = False
+    demo_enabled: bool = True
     probe_attempted: bool = False
     reachable: bool | None = None
     auth_accepted: bool | None = None

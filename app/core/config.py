@@ -89,11 +89,19 @@ class Settings(BaseSettings):
     SYNC_OUTBOUND_MAX_ATTEMPTS: int = 6
     SYNC_OUTBOUND_ALLOW_NOOP_TARGET: bool = True
 
-    # Facturación / Timbrado CFDI (sandbox)
-    TIMBRACFDI_BASE_URL: str = "https://pruebas.timbracfdi33.mx:1444/api/v2"
-    TIMBRACFDI_TOKEN: Optional[str] = None
+    # Facturación / Timbrado CFDI
+    # Flujo recomendado: dejar `TIMBRACFDI_ENV=sandbox` mientras el PAC no active productivo.
+    # Cuando activen productivo, solo cambia `TIMBRACFDI_ENV=production` y llena las variables PROD.
+    TIMBRACFDI_ENV: str = "sandbox"  # sandbox|production
+    TIMBRACFDI_BASE_URL: str = "https://pruebas.timbracfdi33.mx:1444/api/v2"  # compatibilidad legacy
+    TIMBRACFDI_TOKEN: Optional[str] = None  # compatibilidad legacy
+    TIMBRACFDI_SANDBOX_BASE_URL: str = "https://pruebas.timbracfdi33.mx:1444/api/v2"
+    TIMBRACFDI_SANDBOX_TOKEN: Optional[str] = None
+    TIMBRACFDI_PRODUCTION_BASE_URL: Optional[str] = None
+    TIMBRACFDI_PRODUCTION_TOKEN: Optional[str] = None
     TIMBRACFDI_TIMEOUT: int = 45
     TIMBRACFDI_EMIT_OFFSET_HOURS: int = 5
+    TIMBRACFDI_DEMO_ENABLED: bool = True
 
     # Developer-led GTM
     DEVELOPER_PORTAL_ENABLED: bool = True
@@ -108,6 +116,35 @@ class Settings(BaseSettings):
     @property
     def effective_db_url(self) -> str:
         return (self.DATABASE_URL or self.DB_URL).strip()
+
+    @property
+    def timbracfdi_environment(self) -> str:
+        env = (self.TIMBRACFDI_ENV or "sandbox").strip().lower()
+        return env if env in {"sandbox", "production"} else "sandbox"
+
+    @property
+    def timbracfdi_active_base_url(self) -> str:
+        if self.timbracfdi_environment == "production":
+            return (self.TIMBRACFDI_PRODUCTION_BASE_URL or self.TIMBRACFDI_BASE_URL).strip()
+        return (self.TIMBRACFDI_SANDBOX_BASE_URL or self.TIMBRACFDI_BASE_URL).strip()
+
+    @property
+    def timbracfdi_active_token(self) -> str:
+        if self.timbracfdi_environment == "production":
+            return (self.TIMBRACFDI_PRODUCTION_TOKEN or self.TIMBRACFDI_TOKEN or "").strip()
+        return (self.TIMBRACFDI_SANDBOX_TOKEN or self.TIMBRACFDI_TOKEN or "").strip()
+
+    @property
+    def timbracfdi_sandbox_configured(self) -> bool:
+        sandbox_base = (self.TIMBRACFDI_SANDBOX_BASE_URL or self.TIMBRACFDI_BASE_URL).strip()
+        sandbox_token = (self.TIMBRACFDI_SANDBOX_TOKEN or self.TIMBRACFDI_TOKEN or "").strip()
+        return bool(sandbox_base and sandbox_token)
+
+    @property
+    def timbracfdi_production_configured(self) -> bool:
+        production_base = (self.TIMBRACFDI_PRODUCTION_BASE_URL or "").strip()
+        production_token = (self.TIMBRACFDI_PRODUCTION_TOKEN or "").strip()
+        return bool(production_base and production_token)
 
 
 settings = Settings()

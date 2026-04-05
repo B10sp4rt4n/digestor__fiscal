@@ -21,19 +21,24 @@ router = APIRouter(prefix="/v1/billing", tags=["billing-v1"])
     "/provider/status",
     response_model=BillingProviderStatusResponse,
     summary="Verificar conexión con proveedor de timbrado",
-    description="Confirma si TimbraCFDI está configurado y, si `probe=true`, intenta una llamada real al sandbox.",
+    description="Confirma si TimbraCFDI está configurado, muestra el entorno activo (`sandbox` o `production`) y, si `probe=true`, intenta una llamada real al proveedor activo.",
 )
 def get_billing_provider_status(
     probe: bool = Query(default=True, description="Si true, intenta una llamada real al sandbox del proveedor."),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
 ):
     configured = timbracfdi_client.is_configured()
-    token_present = bool((settings.TIMBRACFDI_TOKEN or "").strip())
+    token_present = bool(settings.timbracfdi_active_token)
 
     response = BillingProviderStatusResponse(
+        environment=settings.timbracfdi_environment,
         configured=configured,
-        base_url=settings.TIMBRACFDI_BASE_URL,
+        base_url=settings.timbracfdi_active_base_url,
         token_present=token_present,
+        sandbox_configured=settings.timbracfdi_sandbox_configured,
+        production_configured=settings.timbracfdi_production_configured,
+        ready_for_live=settings.timbracfdi_production_configured,
+        demo_enabled=settings.TIMBRACFDI_DEMO_ENABLED,
         probe_attempted=probe and configured,
     )
 
@@ -85,7 +90,7 @@ def timbra_cfdi(
     "/timbracfdi/timbra-demo",
     response_model=BillingProviderProxyResponse,
     summary="Timbrado demo sandbox listo para Swagger",
-    description="Genera internamente un CFDI demo válido para pruebas y lo timbra en el sandbox de TimbraCFDI. Puedes mandar `{}`.",
+    description="Genera internamente un CFDI demo válido para pruebas y lo timbra en TimbraCFDI. Úsalo en sandbox; cuando pases a productivo, puedes deshabilitarlo con `TIMBRACFDI_DEMO_ENABLED=0`.",
 )
 def timbra_demo_cfdi(
     body: TimbradoDemoRequest,

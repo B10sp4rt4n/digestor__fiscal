@@ -13,27 +13,27 @@ class TimbraCFDIConfigurationError(RuntimeError):
 
 
 def is_configured() -> bool:
-    return bool((settings.TIMBRACFDI_BASE_URL or "").strip() and (settings.TIMBRACFDI_TOKEN or "").strip())
+    return bool(settings.timbracfdi_active_base_url and settings.timbracfdi_active_token)
 
 
 def _require_configured() -> None:
     if not is_configured():
         raise TimbraCFDIConfigurationError(
-            "Configura TIMBRACFDI_BASE_URL y TIMBRACFDI_TOKEN para usar el proveedor de timbrado."
+            "Configura las variables activas de TimbraCFDI para el entorno actual (`TIMBRACFDI_ENV`)."
         )
 
 
 def _headers() -> dict[str, str]:
     _require_configured()
     return {
-        "Authorization": f"Bearer {settings.TIMBRACFDI_TOKEN}",
+        "Authorization": f"Bearer {settings.timbracfdi_active_token}",
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
 
 
 def _base_url() -> str:
-    return settings.TIMBRACFDI_BASE_URL.rstrip("/")
+    return settings.timbracfdi_active_base_url.rstrip("/")
 
 
 def _normalize_response(response: requests.Response) -> dict[str, Any]:
@@ -93,6 +93,11 @@ def build_demo_cfdi_xml_base64(folio: str | None = None) -> str:
 
 
 def timbra_demo_cfdi(folio: str | None = None, id_comprobante: str | None = None) -> dict[str, Any]:
+    if settings.timbracfdi_environment == "production" and not settings.TIMBRACFDI_DEMO_ENABLED:
+        raise TimbraCFDIConfigurationError(
+            "El timbrado demo está deshabilitado en modo productivo. Usa `/timbracfdi/timbra` con tu XML real."
+        )
+
     folio_value = folio or str(int((datetime.now(timezone.utc) - timedelta(hours=settings.TIMBRACFDI_EMIT_OFFSET_HOURS)).timestamp()))
     xml_base64 = build_demo_cfdi_xml_base64(folio=folio_value)
     support_id = id_comprobante or f"digestor-demo-{folio_value}"

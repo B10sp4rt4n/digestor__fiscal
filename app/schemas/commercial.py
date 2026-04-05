@@ -119,11 +119,11 @@ class BillingDraftCreateRequest(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "customer_name": "CLIENTE DEMO SA DE CV",
+                "customer_name": "PUBLICO EN GENERAL",
                 "customer_rfc": "XAXX010101000",
-                "customer_zip": "64000",
-                "customer_regimen": "601",
-                "customer_use_cfdi": "G03",
+                "customer_zip": "32690",
+                "customer_regimen": "616",
+                "customer_use_cfdi": "S01",
                 "notes": "Prefactura lista para revisión",
                 "items": [
                     {

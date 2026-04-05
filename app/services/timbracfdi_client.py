@@ -53,7 +53,7 @@ _DEMO_CFDI_XML_TEMPLATE = dedent(
     """\
     <?xml version="1.0" encoding="utf-8"?>
     <cfdi:Comprobante xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Moneda="MXN" Total="560.00" xsi:schemaLocation="http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd" Exportacion="01" MetodoPago="PUE" TipoDeComprobante="I" SubTotal="500.00" FormaPago="01" LugarExpedicion="32690" Fecha="{fecha}" Folio="{folio}" Version="4.0">
-      <cfdi:Emisor Rfc="IIA040805DZ4" Nombre="INDISTRIA ILUMINADORA DE ALMACENES" RegimenFiscal="626" />
+      <cfdi:Emisor Rfc="IIA040805DZ4" Nombre="INDUSTRIA ILUMINADORA DE ALMACENES" RegimenFiscal="626" />
       <cfdi:Receptor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" DomicilioFiscalReceptor="42501" RegimenFiscalReceptor="603" UsoCFDI="G03" />
       <cfdi:Conceptos>
         <cfdi:Concepto ClaveProdServ="78101800" NoIdentificacion="123" Cantidad="1" ClaveUnidad="E48" Descripcion="Producto Demo Digestor" ValorUnitario="500.00" Importe="500.00" ObjetoImp="02">

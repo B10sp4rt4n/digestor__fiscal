@@ -226,6 +226,18 @@ def _get_draft_or_404(db: Session, company_id: str, draft_id: str) -> BillingDra
 
 def _build_preview_html(draft: BillingDraft) -> str:
     missing = _missing_fields(draft)
+    customer_rfc = (draft.customer_rfc or "").strip().upper()
+    preview_customer_name = draft.customer_name or ""
+    preview_customer_zip = draft.customer_zip or ""
+    preview_customer_regimen = draft.customer_regimen or ""
+    preview_customer_use_cfdi = draft.customer_use_cfdi or ""
+
+    if customer_rfc in {"XAXX010101000", "XEXX010101000"}:
+        preview_customer_name = "PUBLICO EN GENERAL"
+        preview_customer_zip = draft.place_of_issue or preview_customer_zip
+        preview_customer_regimen = "616"
+        preview_customer_use_cfdi = "S01"
+
     rows = "".join(
         f"""
         <tr>
@@ -233,7 +245,7 @@ def _build_preview_html(draft: BillingDraft) -> str:
           <td>{escape(item.description)}</td>
           <td class=\"num\">{item.quantity:.2f}</td>
           <td class=\"num\">${item.unit_price:,.2f}</td>
-          <td class=\"num\">${item.line_total:,.2f}</td>
+          <td class=\"num\">${item.line_subtotal:,.2f}</td>
         </tr>
         """
         for item in draft.items
@@ -281,11 +293,11 @@ def _build_preview_html(draft: BillingDraft) -> str:
           </div>
           <div class="box">
             <h3>Receptor</h3>
-            <div><strong>{escape(draft.customer_name or '')}</strong></div>
+            <div><strong>{escape(preview_customer_name)}</strong></div>
             <div>RFC: {escape(draft.customer_rfc or '')}</div>
-            <div>CP: {escape(draft.customer_zip or '')}</div>
-            <div>Régimen: {escape(draft.customer_regimen or '')}</div>
-            <div>Uso CFDI: {escape(draft.customer_use_cfdi or '')}</div>
+            <div>CP: {escape(preview_customer_zip)}</div>
+            <div>Régimen: {escape(preview_customer_regimen)}</div>
+            <div>Uso CFDI: {escape(preview_customer_use_cfdi)}</div>
           </div>
         </div>
 
@@ -551,7 +563,7 @@ def create_billing_draft(
         customer_regimen=body.customer_regimen,
         customer_use_cfdi=body.customer_use_cfdi,
         emitter_rfc=body.emitter_rfc or "IIA040805DZ4",
-        emitter_name=body.emitter_name or "INDISTRIA ILUMINADORA DE ALMACENES",
+        emitter_name=body.emitter_name or "INDUSTRIA ILUMINADORA DE ALMACENES",
         emitter_regimen=body.emitter_regimen or "626",
         place_of_issue=body.place_of_issue or "32690",
         currency=body.currency,

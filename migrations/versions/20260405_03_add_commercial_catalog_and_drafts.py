@@ -61,7 +61,7 @@ def upgrade() -> None:
             sa.Column("customer_regimen", sa.String(), nullable=True),
             sa.Column("customer_use_cfdi", sa.String(), nullable=True),
             sa.Column("emitter_rfc", sa.String(), nullable=False, server_default="IIA040805DZ4"),
-            sa.Column("emitter_name", sa.String(), nullable=False, server_default="INDISTRIA ILUMINADORA DE ALMACENES"),
+            sa.Column("emitter_name", sa.String(), nullable=False, server_default="INDUSTRIA ILUMINADORA DE ALMACENES"),
             sa.Column("emitter_regimen", sa.String(), nullable=False, server_default="626"),
             sa.Column("place_of_issue", sa.String(), nullable=False, server_default="32690"),
             sa.Column("currency", sa.String(), nullable=False, server_default="MXN"),

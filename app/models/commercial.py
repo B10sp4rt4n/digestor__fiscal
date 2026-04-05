@@ -46,7 +46,7 @@ class BillingDraft(Base):
     customer_use_cfdi = Column(String, nullable=True)
 
     emitter_rfc = Column(String, nullable=False, default="IIA040805DZ4", server_default="IIA040805DZ4")
-    emitter_name = Column(String, nullable=False, default="INDISTRIA ILUMINADORA DE ALMACENES", server_default="INDISTRIA ILUMINADORA DE ALMACENES")
+    emitter_name = Column(String, nullable=False, default="INDUSTRIA ILUMINADORA DE ALMACENES", server_default="INDUSTRIA ILUMINADORA DE ALMACENES")
     emitter_regimen = Column(String, nullable=False, default="626", server_default="626")
     place_of_issue = Column(String, nullable=False, default="32690", server_default="32690")
 

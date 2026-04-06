@@ -1098,7 +1098,11 @@ with tab_commercial:
                         key="demo_download_pdf",
                     )
                 else:
-                    st.caption("PDF no disponible")
+                    try:
+                        _err_detail = _pdf_resp.json().get("detail", _pdf_resp.text[:80])
+                    except Exception:
+                        _err_detail = _pdf_resp.text[:80]
+                    st.caption(f"PDF no disponible ({_pdf_resp.status_code}: {_err_detail})")
             if _last_draft.get("status") != "stamped":
                 if st.button("Timbrar en sandbox", key="demo_stamp", width="stretch"):
                     with st.spinner("Timbrando..."):

@@ -974,14 +974,14 @@ def download_billing_draft_pdf(
     fill_row = False
     for i, item in enumerate(items, 1):
         pdf.set_fill_color(248, 250, 252) if fill_row else pdf.set_fill_color(255, 255, 255)
-        concepto = _f(item.get("descripcion") or item.get("concepto", ""))
-        concepto_short = concepto[:55] + "…" if len(concepto) > 55 else concepto
+        desc = _f(item.description)
+        desc_short = desc[:55] + "…" if len(desc) > 55 else desc
         pdf.cell(8, 6, str(i), border=1, fill=fill_row)
-        pdf.cell(20, 6, _f(item.get("sku") or item.get("clave_prod_serv", "")), border=1, fill=fill_row)
-        pdf.cell(80, 6, concepto_short, border=1, fill=fill_row)
-        pdf.cell(15, 6, _f(item.get("cantidad", "")), align="R", border=1, fill=fill_row)
-        pdf.cell(25, 6, _money(item.get("precio_unitario") or item.get("valor_unitario")), align="R", border=1, fill=fill_row)
-        pdf.cell(25, 6, _money(item.get("importe") or item.get("subtotal")), align="R", border=1, fill=fill_row)
+        pdf.cell(20, 6, _f(item.sku or item.sat_product_code), border=1, fill=fill_row)
+        pdf.cell(80, 6, desc_short, border=1, fill=fill_row)
+        pdf.cell(15, 6, str(item.quantity or 1), align="R", border=1, fill=fill_row)
+        pdf.cell(25, 6, _money(item.unit_price), align="R", border=1, fill=fill_row)
+        pdf.cell(25, 6, _money(item.line_subtotal), align="R", border=1, fill=fill_row)
         pdf.ln()
         fill_row = not fill_row
 

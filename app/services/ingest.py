@@ -76,12 +76,17 @@ def _sha256(data: bytes) -> str:
 
 
 def _extract_text_from_pdf(content: bytes) -> str:
-    reader = PdfReader(io.BytesIO(content))
+    """Extrae texto del PDF preservando espacios entre palabras (PyMuPDF).
+    pypdf concatena palabras; fitz respeta el posicionamiento de glifos."""
+    doc = fitz.open(stream=content, filetype="pdf")
     parts = []
-    for page in reader.pages:
-        text = page.extract_text()
-        if text:
-            parts.append(text)
+    try:
+        for page in doc:
+            text = page.get_text("text")
+            if text:
+                parts.append(text)
+    finally:
+        doc.close()
     return "\n".join(parts)
 
 

@@ -153,3 +153,165 @@ def timbra_cfdi(xml_base64: str, id_comprobante: str | None = None) -> dict[str,
         timeout=settings.TIMBRACFDI_TIMEOUT,
     )
     return _normalize_response(response)
+
+
+# Códigos SAT CFDI 4.0 que indican que el RFC del receptor NO existe en el padrón
+_RFC_NOT_FOUND_CODES = {
+    "CFDI40132",  # RFC receptor no se encuentra en el padrón
+    "CFDI40133",  # RFC receptor no es válido para operaciones
+    "CFDI40134",  # RFC receptor cancelado
+    "CFDI40166",  # RFC receptor no localizado
+}
+
+# Códigos que indican error del EMISOR (no del receptor) → RFC receptor podría ser válido
+_EMISOR_ERROR_CODES = {
+    "CFDI40111",  # Emisor no registrado
+    "CFDI40112",  # CSD emisor no vigente
+    "CFDI40113",  # CSD emisor no corresponde
+    "CFDI40114",  # Emisor cancelado
+}
+
+_PROBE_XML_TEMPLATE = dedent(
+    """\
+    <?xml version="1.0" encoding="utf-8"?>
+    <cfdi:Comprobante xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:cfdi="http://www.sat.gob.mx/cfd/4" \
+Moneda="MXN" Total="116.00" xsi:schemaLocation="http://www.sat.gob.mx/cfd/4 http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd" \
+Exportacion="01" MetodoPago="PUE" TipoDeComprobante="I" SubTotal="100.00" FormaPago="01" \
+LugarExpedicion="32690" Fecha="{fecha}" Folio="{folio}" Version="4.0">
+      <cfdi:Emisor Rfc="IIA040805DZ4" Nombre="INDUSTRIA ILUMINADORA DE ALMACENES" RegimenFiscal="626" />
+      <cfdi:Receptor Rfc="{rfc}" Nombre="{nombre}" DomicilioFiscalReceptor="{cp}" RegimenFiscalReceptor="{regimen}" UsoCFDI="G03" />
+      <cfdi:Conceptos>
+        <cfdi:Concepto ClaveProdServ="78101800" Cantidad="1" ClaveUnidad="E48" Descripcion="Prueba validacion RFC" ValorUnitario="100.00" Importe="100.00" ObjetoImp="02">
+          <cfdi:Impuestos>
+            <cfdi:Traslados>
+              <cfdi:Traslado Base="100.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="16.00" />
+            </cfdi:Traslados>
+          </cfdi:Impuestos>
+        </cfdi:Concepto>
+      </cfdi:Conceptos>
+      <cfdi:Impuestos TotalImpuestosTrasladados="16.00">
+        <cfdi:Traslados>
+          <cfdi:Traslado Base="100.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="16.00" />
+        </cfdi:Traslados>
+      </cfdi:Impuestos>
+    </cfdi:Comprobante>
+    """
+).strip()
+
+
+def validate_rfc_via_pac(
+    rfc: str,
+    nombre: str,
+    cp: str,
+    regimen: str,
+) -> dict[str, Any]:
+    """
+    Envía un CFDI mínimo de prueba al sandbox del PAC para verificar si el RFC
+    del receptor existe y está activo en el padrón del SAT.
+
+    Retorna:
+        {
+            "rfc_valid": bool | None,   # None = no se pudo determinar
+            "active_in_padron": bool | None,
+            "pac_error_code": str | None,
+            "pac_message": str | None,
+            "pac_available": bool,
+        }
+    """
+    if not is_configured():
+        return {
+            "rfc_valid": None,
+            "active_in_padron": None,
+            "pac_error_code": None,
+            "pac_message": "PAC sandbox no configurado.",
+            "pac_available": False,
+        }
+
+    issue_time = datetime.now(timezone.utc) - timedelta(hours=settings.TIMBRACFDI_EMIT_OFFSET_HOURS)
+    fecha = issue_time.strftime("%Y-%m-%dT%H:%M:%S")
+    folio = f"VAL-{int(issue_time.timestamp())}"
+
+    xml = _PROBE_XML_TEMPLATE.format(
+        fecha=fecha,
+        folio=folio,
+        rfc=rfc.upper().strip(),
+        nombre=(nombre or rfc).upper().strip()[:254],
+        cp=(cp or "32690").strip(),
+        regimen=(regimen or "626").strip(),
+    )
+    xml_b64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
+
+    try:
+        resp = timbra_cfdi(xml_base64=xml_b64, id_comprobante=folio)
+    except Exception as e:
+        return {
+            "rfc_valid": None,
+            "active_in_padron": None,
+            "pac_error_code": None,
+            "pac_message": f"Error de conexión con el PAC: {e}",
+            "pac_available": False,
+        }
+
+    pac_data = resp.get("provider_response", {})
+
+    # Extraer código de error SAT del response
+    error_code: str | None = None
+    error_msg: str | None = None
+    if isinstance(pac_data, dict):
+        # TimbraCFDI devuelve lista de errores en "Errores" o "errores"
+        errores = pac_data.get("Errores") or pac_data.get("errores") or []
+        if errores and isinstance(errores, list):
+            first = errores[0]
+            error_code = str(first.get("CodigoError") or first.get("codigo") or "").strip()
+            error_msg = str(first.get("Descripcion") or first.get("mensaje") or "").strip()
+        elif not resp["ok"]:
+            error_msg = str(pac_data.get("mensaje") or pac_data.get("message") or pac_data)[:200]
+
+    # Si timbró exitosamente → RFC definitivamente válido
+    if resp["ok"] and not error_code:
+        return {
+            "rfc_valid": True,
+            "active_in_padron": True,
+            "pac_error_code": None,
+            "pac_message": "RFC verificado y activo en el padrón del SAT.",
+            "pac_available": True,
+        }
+
+    # RFC no encontrado en padrón
+    if error_code in _RFC_NOT_FOUND_CODES:
+        return {
+            "rfc_valid": False,
+            "active_in_padron": False,
+            "pac_error_code": error_code,
+            "pac_message": error_msg or f"RFC no encontrado en el padrón del SAT ({error_code}).",
+            "pac_available": True,
+        }
+
+    # Error del emisor → no podemos determinar si el receptor es válido, pero el PAC respondió
+    if error_code in _EMISOR_ERROR_CODES:
+        return {
+            "rfc_valid": None,
+            "active_in_padron": None,
+            "pac_error_code": error_code,
+            "pac_message": "PAC respondió pero no se pudo verificar el receptor (error de configuración del emisor).",
+            "pac_available": True,
+        }
+
+    # Otros errores SAT (estructura XML, régimen, etc.) → PAC está activo, RFC no fue el problema
+    if error_code and error_code.startswith("CFDI"):
+        return {
+            "rfc_valid": None,
+            "active_in_padron": None,
+            "pac_error_code": error_code,
+            "pac_message": f"PAC respondió con error de estructura ({error_code}): {error_msg}",
+            "pac_available": True,
+        }
+
+    # Respuesta inesperada
+    return {
+        "rfc_valid": None,
+        "active_in_padron": None,
+        "pac_error_code": error_code,
+        "pac_message": error_msg or "Respuesta inesperada del PAC.",
+        "pac_available": True,
+    }

@@ -24,6 +24,7 @@ import app.models.user             # noqa: F401
 
 from app.api.routers import audit_v1, backups, billing_v1, commercial_v1, csf, developer_portal, documents_v1, health, metrics_v1, upload, sync, sync_v1, telemetry as telemetry_router
 from app.api.routers import auth_router
+from app.api.routers import receptor_validate
 from app.services import telemetry
 from app.services.document_queue import document_queue
 from app.services.outbound_delivery_service import outbound_delivery_worker
@@ -108,3 +109,4 @@ app.include_router(upload.router)
 app.include_router(sync.router)
 app.include_router(sync_v1.router)
 app.include_router(telemetry_router.router)
+app.include_router(receptor_validate.router)

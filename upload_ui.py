@@ -377,7 +377,7 @@ with st.sidebar:
 # Alias para las variables que el resto del UI usa
 company_id = st.session_state["tenant_id"]
 
-tab_upload, tab_history, tab_commercial, tab_dashboard = st.tabs(["Cargar documento", "Historial", "Demo comercial viva", "Dashboard"])
+tab_upload, tab_history, tab_commercial, tab_validate, tab_dashboard = st.tabs(["Cargar documento", "Historial", "Demo comercial viva", "Validar receptor", "Dashboard"])
 
 with tab_upload:
     archivo = st.file_uploader("Selecciona tu CSF (.pdf o .zip)", type=["pdf", "zip"])
@@ -1121,6 +1121,117 @@ with tab_commercial:
 
     else:
         st.info("Elige una constancia ya procesada del listado para comenzar la simulación.")
+
+with tab_validate:
+    st.subheader("Validar datos fiscales de receptor")
+    st.caption(
+        "Ingresa los datos del receptor para verificar si son correctos para CFDI 4.0 "
+        "antes de intentar facturar. No se guarda ningún dato."
+    )
+
+    _REGIMENES_OPCIONES = {
+        "601": "601 — General de Ley Personas Morales",
+        "603": "603 — Personas Morales con Fines no Lucrativos",
+        "605": "605 — Sueldos y Salarios",
+        "606": "606 — Arrendamiento",
+        "607": "607 — Enajenación o Adquisición de Bienes",
+        "608": "608 — Demás ingresos",
+        "610": "610 — Residentes en el Extranjero",
+        "611": "611 — Ingresos por Dividendos",
+        "612": "612 — Actividades Empresariales y Profesionales",
+        "614": "614 — Ingresos por intereses",
+        "616": "616 — Sin obligaciones fiscales",
+        "621": "621 — Incorporación Fiscal",
+        "622": "622 — Actividades Agrícolas, Ganaderas, Silvícolas y Pesqueras",
+        "625": "625 — Plataformas Tecnológicas",
+        "626": "626 — Régimen Simplificado de Confianza (RESICO)",
+    }
+    _USOS_CFDI_OPCIONES = {
+        "G01": "G01 — Adquisición de mercancias",
+        "G02": "G02 — Devoluciones, descuentos o bonificaciones",
+        "G03": "G03 — Gastos en general",
+        "I01": "I01 — Construcciones",
+        "I04": "I04 — Equipo de computo y accesorios",
+        "D01": "D01 — Honorarios médicos y gastos hospitalarios",
+        "S01": "S01 — Sin efectos fiscales",
+        "CP01": "CP01 — Pagos",
+        "CN01": "CN01 — Nómina",
+    }
+
+    with st.form("form_validar_receptor"):
+        _vcol1, _vcol2 = st.columns(2)
+        with _vcol1:
+            _v_rfc = st.text_input("RFC *", placeholder="LOEM890201JN4").strip().upper()
+            _v_nombre = st.text_input("Razón Social / Nombre", placeholder="Opcional")
+            _v_cp = st.text_input("Código Postal (domicilio fiscal) *", placeholder="32690").strip()
+        with _vcol2:
+            _v_regimen = st.selectbox(
+                "Régimen Fiscal *",
+                options=[""] + list(_REGIMENES_OPCIONES.keys()),
+                format_func=lambda x: _REGIMENES_OPCIONES.get(x, "— Selecciona —") if x else "— Selecciona —",
+            )
+            _v_uso = st.selectbox(
+                "Uso CFDI (opcional)",
+                options=[""] + list(_USOS_CFDI_OPCIONES.keys()),
+                format_func=lambda x: _USOS_CFDI_OPCIONES.get(x, "— No validar —") if x else "— No validar —",
+            )
+            _v_pac = st.checkbox(
+                "Verificar RFC contra padrón SAT (vía PAC sandbox)",
+                value=False,
+                help="Envía un CFDI de prueba al sandbox del PAC para confirmar que el RFC existe y está activo. Tarda ~5 seg.",
+            )
+        _v_submit = st.form_submit_button("Validar datos fiscales", use_container_width=True)
+
+    if _v_submit:
+        if not _v_rfc or not _v_cp or not _v_regimen:
+            st.warning("RFC, Código Postal y Régimen Fiscal son obligatorios.")
+        else:
+            _payload = {"rfc": _v_rfc, "cp": _v_cp, "regimen": _v_regimen}
+            if _v_nombre:
+                _payload["nombre"] = _v_nombre
+            if _v_uso:
+                _payload["uso_cfdi"] = _v_uso
+            _spinner_msg = "Validando contra catálogos SAT..." if not _v_pac else "Validando y verificando RFC en padrón SAT vía PAC..."
+            with st.spinner(_spinner_msg):
+                _vr = requests.post(
+                    f"{API}/v1/receptor/validate",
+                    json=_payload,
+                    params={"pac_check": "true"} if _v_pac else {},
+                    timeout=30,
+                )
+            if _vr.status_code == 200:
+                _vdata = _vr.json()
+                if _vdata["valid"]:
+                    st.success(f"✅ {_vdata['summary']}")
+                else:
+                    st.error(f"❌ {_vdata['summary']}")
+
+                st.markdown("**Nivel 1 — Catálogos SAT:**")
+                for _fname, _fres in _vdata["fields"].items():
+                    _ico = "✅" if _fres["valid"] else "❌"
+                    st.markdown(f"- {_ico} **{_fname}**: {_fres['message']}")
+
+                # Resultado PAC (nivel 2)
+                _pac = _vdata.get("pac")
+                if _pac:
+                    st.markdown("**Nivel 2 — Verificación padrón SAT (PAC sandbox):**")
+                    if not _pac["available"]:
+                        st.warning(f"PAC no disponible: {_pac['message']}")
+                    elif _pac["rfc_active"] is True:
+                        st.success(f"✅ RFC activo en el padrón del SAT")
+                    elif _pac["rfc_active"] is False:
+                        st.error(f"❌ {_pac['message']} (código: {_pac.get('error_code', '')})")
+                    else:
+                        st.info(f"ℹ️ {_pac['message']}")
+
+                if _vdata["valid"]:
+                    st.info(
+                        "Los datos son válidos. Puedes usarlos para crear una prefactura "
+                        "en la tab **Demo comercial viva** o subir la Constancia de Situación Fiscal "
+                        "para validación oficial del SAT."
+                    )
+            else:
+                st.error(f"Error en validación: {_vr.status_code}")
 
 with tab_dashboard:
     st.subheader("Resumen de constancias")

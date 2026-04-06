@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     TIMBRACFDI_PRODUCTION_BASE_URL: Optional[str] = None
     TIMBRACFDI_PRODUCTION_TOKEN: Optional[str] = None
     TIMBRACFDI_TIMEOUT: int = 45
-    TIMBRACFDI_EMIT_OFFSET_HOURS: int = 5
+    TIMBRACFDI_EMIT_OFFSET_HOURS: int = 6
     TIMBRACFDI_DEMO_ENABLED: bool = True
 
     # Developer-led GTM

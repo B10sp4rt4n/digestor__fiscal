@@ -939,18 +939,18 @@ def download_billing_draft_pdf(
             pdf.set_xy(x, pdf.get_y() + 6)
             pdf.multi_cell(col, 5, line)
 
-    meta = draft.metadata_json or {}
     emisor_lines = [
-        _f(meta.get("emisor_nombre"), "Emisor"),
-        f"RFC: {_f(meta.get('emisor_rfc'))}",
-        f"Régimen: {_f(meta.get('emisor_regimen'))}",
+        _f(draft.emitter_name, "Emisor"),
+        f"RFC: {_f(draft.emitter_rfc)}",
+        f"Régimen: {_f(draft.emitter_regimen)}",
+        f"CP: {_f(draft.place_of_issue)}",
     ]
     receptor_lines = [
-        _f(draft.receptor_razon_social),
-        f"RFC: {_f(draft.receptor_rfc)}",
-        f"Uso CFDI: {_f(draft.uso_cfdi)}",
-        f"Régimen Fiscal: {_f(draft.regimen_fiscal_receptor)}",
-        f"CP: {_f(draft.receptor_domicilio_fiscal)}",
+        _f(draft.customer_name),
+        f"RFC: {_f(draft.customer_rfc)}",
+        f"Uso CFDI: {_f(draft.customer_use_cfdi)}",
+        f"Régimen Fiscal: {_f(draft.customer_regimen)}",
+        f"CP: {_f(draft.customer_zip)}",
     ]
     _party_box(15, "EMISOR", emisor_lines)
     _party_box(15 + col + 4, "RECEPTOR", receptor_lines)
@@ -991,7 +991,7 @@ def download_billing_draft_pdf(
     pdf.set_font("Helvetica", "", 9)
     totales = [
         ("Subtotal", _money(draft.subtotal)),
-        ("IVA (16%)", _money(draft.iva)),
+        ("IVA (16%)", _money(draft.taxes)),
         ("TOTAL", _money(draft.total)),
     ]
     for label_t, valor in totales:

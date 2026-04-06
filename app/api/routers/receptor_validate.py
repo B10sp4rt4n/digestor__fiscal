@@ -5,7 +5,7 @@ contra catálogos SAT actualizados a CFDI 4.0.
 """
 
 import re
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 router = APIRouter(tags=["Receptor Validation"])
@@ -162,10 +162,18 @@ class FieldResult(BaseModel):
     message: str
 
 
+class PacCheckResult(BaseModel):
+    available: bool
+    rfc_active: bool | None = None   # None = no se pudo determinar
+    error_code: str | None = None
+    message: str
+
+
 class ReceptorValidateResponse(BaseModel):
     valid: bool                        # True solo si TODOS los campos obligatorios pasan
     tipo_persona: str | None = None   # "fisica" | "moral" | None
     fields: dict[str, FieldResult]
+    pac: PacCheckResult | None = None  # presente solo si se solicitó pac_check
     summary: str
 
 
@@ -179,10 +187,15 @@ class ReceptorValidateResponse(BaseModel):
     summary="Validar datos fiscales de receptor (sin login)",
     description=(
         "Valida RFC, CP, régimen fiscal y uso CFDI contra catálogos SAT CFDI 4.0. "
+        "Con pac_check=true envía un CFDI de prueba al sandbox del PAC para verificar "
+        "si el RFC existe y está activo en el padrón del SAT. "
         "No requiere autenticación. No persiste ningún dato."
     ),
 )
-def validate_receptor(req: ReceptorValidateRequest) -> ReceptorValidateResponse:
+def validate_receptor(
+    req: ReceptorValidateRequest,
+    pac_check: bool = Query(default=False, description="Verificar RFC contra padrón SAT via PAC sandbox"),
+) -> ReceptorValidateResponse:
     results: dict[str, FieldResult] = {}
 
     # 1. RFC
@@ -214,13 +227,41 @@ def validate_receptor(req: ReceptorValidateRequest) -> ReceptorValidateResponse:
         )
         results["uso_cfdi"] = FieldResult(valid=uso_ok, message=uso_msg)
 
+    # 6. Verificación PAC sandbox (nivel 2 — opcional)
+    pac_result: PacCheckResult | None = None
+    if pac_check and rfc_ok and cp_ok and reg_ok:
+        from app.services.timbracfdi_client import validate_rfc_via_pac
+        raw = validate_rfc_via_pac(
+            rfc=req.rfc,
+            nombre=req.nombre or req.rfc,
+            cp=req.cp,
+            regimen=req.regimen,
+        )
+        pac_result = PacCheckResult(
+            available=raw["pac_available"],
+            rfc_active=raw["rfc_valid"],
+            error_code=raw["pac_error_code"],
+            message=raw["pac_message"],
+        )
+        # Si el PAC confirma que el RFC no está activo, marcarlo en fields
+        if raw["rfc_valid"] is False:
+            results["rfc"] = FieldResult(
+                valid=False,
+                message=f"RFC no activo en padrón SAT ({raw['pac_error_code']}): {raw['pac_message']}",
+            )
+
     # Resultado global
     all_valid = all(r.valid for r in results.values())
     if all_valid:
+        pac_suffix = ""
+        if pac_result and pac_result.rfc_active is True:
+            pac_suffix = " RFC verificado activo en padron SAT."
+        elif pac_result and pac_result.rfc_active is None and pac_check:
+            pac_suffix = " (verificacion PAC no concluyente)"
         summary = (
             f"Datos fiscales validos para CFDI 4.0. "
             f"Persona {'fisica' if tipo_persona == 'fisica' else 'moral'}, "
-            f"regimen {req.regimen}."
+            f"regimen {req.regimen}.{pac_suffix}"
         )
     else:
         failed = [k for k, v in results.items() if not v.valid]
@@ -230,6 +271,7 @@ def validate_receptor(req: ReceptorValidateRequest) -> ReceptorValidateResponse:
         valid=all_valid,
         tipo_persona=tipo_persona,
         fields=results,
+        pac=pac_result,
         summary=summary,
     )
 

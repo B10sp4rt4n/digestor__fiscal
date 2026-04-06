@@ -1175,6 +1175,11 @@ with tab_validate:
                 options=[""] + list(_USOS_CFDI_OPCIONES.keys()),
                 format_func=lambda x: _USOS_CFDI_OPCIONES.get(x, "— No validar —") if x else "— No validar —",
             )
+            _v_pac = st.checkbox(
+                "Verificar RFC contra padrón SAT (vía PAC sandbox)",
+                value=False,
+                help="Envía un CFDI de prueba al sandbox del PAC para confirmar que el RFC existe y está activo. Tarda ~5 seg.",
+            )
         _v_submit = st.form_submit_button("Validar datos fiscales", use_container_width=True)
 
     if _v_submit:
@@ -1186,18 +1191,39 @@ with tab_validate:
                 _payload["nombre"] = _v_nombre
             if _v_uso:
                 _payload["uso_cfdi"] = _v_uso
-            with st.spinner("Validando..."):
-                _vr = requests.post(f"{API}/v1/receptor/validate", json=_payload, timeout=15)
+            _spinner_msg = "Validando contra catálogos SAT..." if not _v_pac else "Validando y verificando RFC en padrón SAT vía PAC..."
+            with st.spinner(_spinner_msg):
+                _vr = requests.post(
+                    f"{API}/v1/receptor/validate",
+                    json=_payload,
+                    params={"pac_check": "true"} if _v_pac else {},
+                    timeout=30,
+                )
             if _vr.status_code == 200:
                 _vdata = _vr.json()
                 if _vdata["valid"]:
                     st.success(f"✅ {_vdata['summary']}")
                 else:
                     st.error(f"❌ {_vdata['summary']}")
-                st.markdown("**Detalle por campo:**")
+
+                st.markdown("**Nivel 1 — Catálogos SAT:**")
                 for _fname, _fres in _vdata["fields"].items():
                     _ico = "✅" if _fres["valid"] else "❌"
                     st.markdown(f"- {_ico} **{_fname}**: {_fres['message']}")
+
+                # Resultado PAC (nivel 2)
+                _pac = _vdata.get("pac")
+                if _pac:
+                    st.markdown("**Nivel 2 — Verificación padrón SAT (PAC sandbox):**")
+                    if not _pac["available"]:
+                        st.warning(f"PAC no disponible: {_pac['message']}")
+                    elif _pac["rfc_active"] is True:
+                        st.success(f"✅ RFC activo en el padrón del SAT")
+                    elif _pac["rfc_active"] is False:
+                        st.error(f"❌ {_pac['message']} (código: {_pac.get('error_code', '')})")
+                    else:
+                        st.info(f"ℹ️ {_pac['message']}")
+
                 if _vdata["valid"]:
                     st.info(
                         "Los datos son válidos. Puedes usarlos para crear una prefactura "

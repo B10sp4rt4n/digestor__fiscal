@@ -1081,6 +1081,24 @@ with tab_commercial:
             dc[3].metric("Total", f"${float(_last_draft.get('total',0)):,.2f}")
             if _preview_html:
                 components.html(_preview_html, height=900, scrolling=True)
+            # Botón descargar PDF
+            _pdf_btn_cols = st.columns([1, 1, 2])
+            with _pdf_btn_cols[0]:
+                _pdf_resp = requests.get(
+                    f"{API}/v1/billing/drafts/{_last_draft['id']}/pdf",
+                    params={"company_id": company_id},
+                    headers=auth_headers(), timeout=60,
+                )
+                if _pdf_resp.status_code == 200:
+                    st.download_button(
+                        label="Descargar PDF",
+                        data=_pdf_resp.content,
+                        file_name=f"prefactura_{_last_draft.get('series','PF')}-{_last_draft.get('folio', _last_draft['id'][:8])}.pdf",
+                        mime="application/pdf",
+                        key="demo_download_pdf",
+                    )
+                else:
+                    st.caption("PDF no disponible")
             if _last_draft.get("status") != "stamped":
                 if st.button("Timbrar en sandbox", key="demo_stamp", width="stretch"):
                     with st.spinner("Timbrando..."):

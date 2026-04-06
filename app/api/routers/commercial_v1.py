@@ -9,7 +9,7 @@ from html import escape
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.auth import SecurityContext, enforce_tenant_scope, role_guard
@@ -366,6 +366,170 @@ def _build_preview_html(draft: BillingDraft) -> str:
     """
 
 
+def _build_prefactura_pdf_html(draft: BillingDraft, is_stamped: bool = False) -> str:
+    """Genera HTML optimizado para conversión a PDF (sin watermark si ya está timbrado)."""
+    customer_rfc = (draft.customer_rfc or "").strip().upper()
+    preview_customer_name = draft.customer_name or ""
+    preview_customer_zip = draft.customer_zip or ""
+    preview_customer_regimen = draft.customer_regimen or ""
+    preview_customer_use_cfdi = draft.customer_use_cfdi or ""
+
+    if customer_rfc in {"XAXX010101000", "XEXX010101000"}:
+        preview_customer_name = "PUBLICO EN GENERAL"
+        preview_customer_zip = draft.place_of_issue or preview_customer_zip
+        preview_customer_regimen = "616"
+        preview_customer_use_cfdi = "S01"
+
+    folio_display = (draft.series or "") + "-" + (draft.folio or draft.id[:8])
+    fecha_display = datetime.now(timezone.utc).strftime("%d/%m/%Y")
+
+    rows = "".join(
+        f"""
+        <tr>
+          <td class="sku">{escape(item.sku or '-')}</td>
+          <td>{escape(item.description)}</td>
+          <td class="num">{item.quantity:.2f}</td>
+          <td class="num">${item.unit_price:,.2f}</td>
+          <td class="num">{int((item.tax_rate or 0) * 100)}%</td>
+          <td class="num">${item.line_subtotal:,.2f}</td>
+        </tr>
+        """
+        for item in draft.items
+    ) or '<tr><td colspan="6" style="text-align:center">Sin partidas.</td></tr>'
+
+    estado_badge = (
+        '<span class="badge stamped">TIMBRADO</span>' if is_stamped
+        else '<span class="badge draft">PREFACTURA</span>'
+    )
+    uuid_row = ""
+    if is_stamped and draft.stamped_xml_base64:
+        try:
+            import re as _re
+            xml_bytes = base64.b64decode(draft.stamped_xml_base64)
+            uuid_match = _re.search(rb'UUID="([^"]+)"', xml_bytes)
+            if uuid_match:
+                uuid_val = uuid_match.group(1).decode()
+                uuid_row = f'<tr><td class="lbl">UUID SAT</td><td class="val" colspan="3"><strong>{escape(uuid_val)}</strong></td></tr>'
+        except Exception:
+            pass
+
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Prefactura {escape(folio_display)}</title>
+  <style>
+    @page {{ margin: 18mm 15mm; }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: Arial, sans-serif; font-size: 10pt; color: #111827; margin: 0; }}
+    .header {{ display: flex; justify-content: space-between; align-items: flex-start;
+               border-bottom: 2px solid #1d4ed8; padding-bottom: 10px; margin-bottom: 14px; }}
+    .logo-area h1 {{ font-size: 14pt; color: #1d4ed8; margin: 0 0 2px 0; }}
+    .logo-area p {{ margin: 1px 0; font-size: 8pt; color: #6b7280; }}
+    .folio-area {{ text-align: right; }}
+    .folio-area .badge {{ display: inline-block; padding: 3px 10px; border-radius: 4px;
+                          font-size: 8pt; font-weight: bold; margin-bottom: 4px; }}
+    .badge.draft {{ background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }}
+    .badge.stamped {{ background: #dcfce7; color: #166534; border: 1px solid #86efac; }}
+    .folio-area .num-big {{ font-size: 16pt; font-weight: bold; color: #1d4ed8; }}
+    .folio-area small {{ font-size: 8pt; color: #6b7280; }}
+    .parties {{ display: flex; gap: 12px; margin-bottom: 14px; }}
+    .party {{ flex: 1; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }}
+    .party h3 {{ font-size: 9pt; text-transform: uppercase; color: #6b7280;
+                 margin: 0 0 6px 0; border-bottom: 1px solid #f3f4f6; padding-bottom: 4px; }}
+    .party strong {{ font-size: 10pt; }}
+    .party p {{ margin: 2px 0; font-size: 9pt; }}
+    .meta-table {{ width: 100%; border-collapse: collapse; margin-bottom: 14px;
+                   font-size: 9pt; border: 1px solid #e5e7eb; border-radius: 6px; }}
+    .meta-table td {{ padding: 5px 10px; }}
+    .meta-table .lbl {{ color: #6b7280; width: 25%; }}
+    .meta-table .val {{ font-weight: 500; }}
+    .meta-table tr:nth-child(odd) {{ background: #f9fafb; }}
+    table.items {{ width: 100%; border-collapse: collapse; margin-bottom: 14px; font-size: 9pt; }}
+    table.items th {{ background: #1d4ed8; color: white; padding: 7px 10px; text-align: left; }}
+    table.items th.num, table.items td.num {{ text-align: right; }}
+    table.items th.sku, table.items td.sku {{ width: 80px; }}
+    table.items tbody tr:nth-child(even) {{ background: #f9fafb; }}
+    table.items td {{ padding: 6px 10px; border-bottom: 1px solid #e5e7eb; }}
+    .totals-wrap {{ display: flex; justify-content: flex-end; margin-bottom: 20px; }}
+    .totals {{ border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; min-width: 260px; }}
+    .totals tr td {{ padding: 6px 14px; font-size: 9pt; }}
+    .totals tr:nth-child(odd) {{ background: #f9fafb; }}
+    .totals .total-row td {{ background: #1d4ed8; color: white; font-weight: bold;
+                             font-size: 11pt; padding: 8px 14px; }}
+    .footer {{ border-top: 1px solid #e5e7eb; padding-top: 8px; font-size: 8pt;
+               color: #9ca3af; text-align: center; margin-top: 10px; }}
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo-area">
+      <h1>{escape(draft.emitter_name or 'Emisor')}</h1>
+      <p>RFC: <strong>{escape(draft.emitter_rfc or '')}</strong></p>
+      <p>Régimen: {escape(draft.emitter_regimen or '')}</p>
+      <p>Lugar de expedición: {escape(draft.place_of_issue or '')}</p>
+    </div>
+    <div class="folio-area">
+      {estado_badge}
+      <div class="num-big">{escape(folio_display)}</div>
+      <small>{fecha_display}</small>
+    </div>
+  </div>
+
+  <div class="parties">
+    <div class="party">
+      <h3>Emisor</h3>
+      <strong>{escape(draft.emitter_name or '')}</strong>
+      <p>RFC: {escape(draft.emitter_rfc or '')}</p>
+      <p>Régimen: {escape(draft.emitter_regimen or '')}</p>
+    </div>
+    <div class="party">
+      <h3>Receptor</h3>
+      <strong>{escape(preview_customer_name)}</strong>
+      <p>RFC: {escape(customer_rfc)}</p>
+      <p>CP: {escape(preview_customer_zip)} | Régimen: {escape(preview_customer_regimen)}</p>
+      <p>Uso CFDI: {escape(preview_customer_use_cfdi)}</p>
+    </div>
+  </div>
+
+  <table class="meta-table">
+    <tr><td class="lbl">Método de pago</td><td class="val">{escape(draft.payment_method or '')}</td>
+        <td class="lbl">Forma de pago</td><td class="val">{escape(draft.payment_form or '')}</td></tr>
+    <tr><td class="lbl">Moneda</td><td class="val">{escape(draft.currency or 'MXN')}</td>
+        <td class="lbl">Estatus</td><td class="val">{escape(draft.status)}</td></tr>
+    {uuid_row}
+  </table>
+
+  <table class="items">
+    <thead>
+      <tr>
+        <th class="sku">SKU</th>
+        <th>Concepto</th>
+        <th class="num">Cant.</th>
+        <th class="num">P. Unit.</th>
+        <th class="num">IVA</th>
+        <th class="num">Importe</th>
+      </tr>
+    </thead>
+    <tbody>{rows}</tbody>
+  </table>
+
+  <div class="totals-wrap">
+    <table class="totals">
+      <tr><td>Subtotal</td><td style="text-align:right">${draft.subtotal:,.2f}</td></tr>
+      <tr><td>Impuestos</td><td style="text-align:right">${draft.taxes:,.2f}</td></tr>
+      <tr class="total-row"><td>Total</td><td style="text-align:right">${draft.total:,.2f} MXN</td></tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    Generado por Digestor Fiscal &nbsp;|&nbsp; {fecha_display}
+    {'&nbsp;|&nbsp; Este documento tiene validez fiscal ante el SAT.' if is_stamped else '&nbsp;|&nbsp; Documento preliminar sin validez fiscal.'}
+  </div>
+</body>
+</html>"""
+
+
 def _build_cfdi_xml(draft: BillingDraft) -> str:
     missing = _missing_fields(draft)
     if missing:
@@ -696,6 +860,39 @@ def preview_billing_draft(
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
     return HTMLResponse(content=_build_preview_html(draft))
+
+
+@router.get(
+    "/v1/billing/drafts/{draft_id}/pdf",
+    summary="Descargar prefactura en PDF",
+    description="Genera y descarga la prefactura como PDF. Si el draft ya fue timbrado, el PDF indica 'TIMBRADO' y muestra el UUID.",
+)
+def download_billing_draft_pdf(
+    draft_id: str,
+    company_id: str | None = Query(default=None),
+    ctx: SecurityContext = Depends(role_guard("viewer", "operator", "admin", "superadmin")),
+    db: Session = Depends(get_db),
+):
+    try:
+        from weasyprint import HTML as WeasyprintHTML
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Generación de PDF no disponible (weasyprint no instalado).")
+
+    cid = enforce_tenant_scope(ctx, company_id)
+    draft = _get_draft_or_404(db, cid, draft_id)
+
+    is_stamped = draft.stamp_status == "stamped"
+    html_content = _build_prefactura_pdf_html(draft, is_stamped=is_stamped)
+    pdf_bytes = WeasyprintHTML(string=html_content).write_pdf()
+
+    folio = (draft.series or "PF") + "-" + (draft.folio or draft.id[:8])
+    filename = f"prefactura_{folio}.pdf".replace(" ", "_")
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post(

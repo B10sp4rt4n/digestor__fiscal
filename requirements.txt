@@ -17,5 +17,5 @@ streamlit-cookies-controller>=0.0.4
 groq>=0.11.0
 instructor>=1.4.0
 openai>=1.50.0
-weasyprint>=62.0
+fpdf2>=2.7
 pytest==9.0.2

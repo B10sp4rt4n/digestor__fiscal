@@ -873,21 +873,145 @@ def download_billing_draft_pdf(
     ctx: SecurityContext = Depends(role_guard("viewer", "operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
-    try:
-        from weasyprint import HTML as WeasyprintHTML
-    except ImportError:
-        raise HTTPException(status_code=501, detail="Generación de PDF no disponible (weasyprint no instalado).")
+    from fpdf import FPDF
+    import textwrap
 
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
 
     is_stamped = draft.stamp_status == "stamped"
-    html_content = _build_prefactura_pdf_html(draft, is_stamped=is_stamped)
-    pdf_bytes = WeasyprintHTML(string=html_content).write_pdf()
-
     folio = (draft.series or "PF") + "-" + (draft.folio or draft.id[:8])
-    filename = f"prefactura_{folio}.pdf".replace(" ", "_")
 
+    # --- helpers ---
+    def _f(v, default="—") -> str:
+        return str(v).strip() if v else default
+
+    def _money(v) -> str:
+        try:
+            return f"${float(v):,.2f}"
+        except Exception:
+            return "—"
+
+    # --- extraer UUID si está timbrado ---
+    uuid_cfdi = ""
+    if is_stamped and draft.stamped_xml_base64:
+        import base64, re as _re
+        try:
+            xml_txt = base64.b64decode(draft.stamped_xml_base64).decode("utf-8", errors="ignore")
+            m = _re.search(r'UUID="([^"]+)"', xml_txt)
+            if m:
+                uuid_cfdi = m.group(1)
+        except Exception:
+            pass
+
+    # --- construir PDF con fpdf2 ---
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margins(15, 15, 15)
+    W = pdf.w - 30  # ancho útil
+
+    # Encabezado azul
+    pdf.set_fill_color(29, 78, 216)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(W, 14, "PREFACTURA" if not is_stamped else "CFDI TIMBRADO", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+    label = f"Folio: {folio}"
+    if is_stamped and uuid_cfdi:
+        label += f"   |   UUID: {uuid_cfdi}"
+    pdf.cell(W, 7, label, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(4)
+
+    # Datos emisor / receptor
+    pdf.set_text_color(0, 0, 0)
+    col = W / 2 - 2
+    y_after = pdf.get_y()
+
+    def _party_box(x, title, lines):
+        pdf.set_xy(x, y_after)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(241, 245, 249)
+        pdf.cell(col, 6, title, fill=True, new_x="RIGHT", new_y="TOP")
+        pdf.ln(0)
+        pdf.set_font("Helvetica", "", 8)
+        for line in lines:
+            pdf.set_xy(x, pdf.get_y() + 6)
+            pdf.multi_cell(col, 5, line)
+
+    meta = draft.metadata_json or {}
+    emisor_lines = [
+        _f(meta.get("emisor_nombre"), "Emisor"),
+        f"RFC: {_f(meta.get('emisor_rfc'))}",
+        f"Régimen: {_f(meta.get('emisor_regimen'))}",
+    ]
+    receptor_lines = [
+        _f(draft.receptor_razon_social),
+        f"RFC: {_f(draft.receptor_rfc)}",
+        f"Uso CFDI: {_f(draft.uso_cfdi)}",
+        f"Régimen Fiscal: {_f(draft.regimen_fiscal_receptor)}",
+        f"CP: {_f(draft.receptor_domicilio_fiscal)}",
+    ]
+    _party_box(15, "EMISOR", emisor_lines)
+    _party_box(15 + col + 4, "RECEPTOR", receptor_lines)
+
+    # Avanzar Y al máximo de ambas columnas
+    pdf.set_xy(15, pdf.get_y() + 8)
+    pdf.ln(2)
+
+    # Tabla de partidas
+    pdf.set_fill_color(29, 78, 216)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 8)
+    headers = [("#", 8), ("Clave", 20), ("Concepto", 80), ("Cant", 15), ("P.Unit", 25), ("Importe", 25)]
+    for h, w in headers:
+        pdf.cell(w, 7, h, border=1, fill=True)
+    pdf.ln()
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 8)
+    items = draft.items or []
+    fill_row = False
+    for i, item in enumerate(items, 1):
+        pdf.set_fill_color(248, 250, 252) if fill_row else pdf.set_fill_color(255, 255, 255)
+        concepto = _f(item.get("descripcion") or item.get("concepto", ""))
+        concepto_short = concepto[:55] + "…" if len(concepto) > 55 else concepto
+        pdf.cell(8, 6, str(i), border=1, fill=fill_row)
+        pdf.cell(20, 6, _f(item.get("sku") or item.get("clave_prod_serv", "")), border=1, fill=fill_row)
+        pdf.cell(80, 6, concepto_short, border=1, fill=fill_row)
+        pdf.cell(15, 6, _f(item.get("cantidad", "")), align="R", border=1, fill=fill_row)
+        pdf.cell(25, 6, _money(item.get("precio_unitario") or item.get("valor_unitario")), align="R", border=1, fill=fill_row)
+        pdf.cell(25, 6, _money(item.get("importe") or item.get("subtotal")), align="R", border=1, fill=fill_row)
+        pdf.ln()
+        fill_row = not fill_row
+
+    pdf.ln(4)
+
+    # Totales
+    pdf.set_font("Helvetica", "", 9)
+    totales = [
+        ("Subtotal", _money(draft.subtotal)),
+        ("IVA (16%)", _money(draft.iva)),
+        ("TOTAL", _money(draft.total)),
+    ]
+    for label_t, valor in totales:
+        pdf.set_x(15 + W - 60)
+        bold = label_t == "TOTAL"
+        pdf.set_font("Helvetica", "B" if bold else "", 9 if not bold else 11)
+        pdf.cell(35, 7, label_t, align="R")
+        pdf.cell(25, 7, valor, align="R", border=1)
+        pdf.ln()
+
+    # Footer
+    pdf.set_y(-20)
+    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_text_color(120, 120, 120)
+    from datetime import date
+    pdf.cell(W, 5, f"Generado el {date.today().strftime('%d/%m/%Y')} — Digestor Fiscal", align="C")
+
+    pdf_bytes = bytes(pdf.output())
+
+    filename = f"prefactura_{folio}.pdf".replace(" ", "_")
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

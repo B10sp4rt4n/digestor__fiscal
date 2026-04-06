@@ -1201,8 +1201,14 @@ with tab_validate:
                 )
             if _vr.status_code == 200:
                 _vdata = _vr.json()
-                if _vdata["valid"]:
+                _pac = _vdata.get("pac")
+                _pac_inconcluyente = _v_pac and _pac and _pac.get("rfc_active") is None
+
+                # Banner principal — si el PAC fue inconcluyente, no mostrar verde puro
+                if _vdata["valid"] and not _pac_inconcluyente:
                     st.success(f"✅ {_vdata['summary']}")
+                elif _vdata["valid"] and _pac_inconcluyente:
+                    st.warning(f"⚠️ Datos de formato válidos — verificación en padrón SAT no concluyente")
                 else:
                     st.error(f"❌ {_vdata['summary']}")
 
@@ -1212,19 +1218,28 @@ with tab_validate:
                     st.markdown(f"- {_ico} **{_fname}**: {_fres['message']}")
 
                 # Resultado PAC (nivel 2)
-                _pac = _vdata.get("pac")
                 if _pac:
                     st.markdown("**Nivel 2 — Verificación padrón SAT (PAC sandbox):**")
                     if not _pac["available"]:
-                        st.warning(f"PAC no disponible: {_pac['message']}")
+                        st.warning(f"⚠️ PAC no disponible: {_pac['message']}")
                     elif _pac["rfc_active"] is True:
-                        st.success(f"✅ RFC activo en el padrón del SAT")
+                        st.success("✅ RFC confirmado activo en el padrón del SAT.")
                     elif _pac["rfc_active"] is False:
-                        st.error(f"❌ {_pac['message']} (código: {_pac.get('error_code', '')})")
+                        _code = _pac.get("error_code") or ""
+                        st.error(f"❌ RFC no activo en padrón SAT ({_code}): {_pac['message']}")
                     else:
-                        st.info(f"ℹ️ {_pac['message']}")
+                        # Inconcluyente — error del emisor u otro
+                        _code = _pac.get("error_code") or ""
+                        _msg = _pac.get("message") or ""
+                        st.warning(
+                            f"⚠️ No fue posible verificar el RFC en el padrón SAT. "
+                            f"El PAC reportó un error del **emisor** (no del receptor), "
+                            f"por lo que los datos del receptor podrían ser correctos. "
+                            f"Sube la CSF para confirmación oficial."
+                            + (f"\n\nCódigo PAC: `{_code}`" if _code else "")
+                        )
 
-                if _vdata["valid"]:
+                if _vdata["valid"] and not _pac_inconcluyente:
                     st.info(
                         "Los datos son válidos. Puedes usarlos para crear una prefactura "
                         "en la tab **Demo comercial viva** o subir la Constancia de Situación Fiscal "

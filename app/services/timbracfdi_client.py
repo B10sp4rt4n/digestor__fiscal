@@ -169,6 +169,9 @@ _EMISOR_ERROR_CODES = {
     "CFDI40112",  # CSD emisor no vigente
     "CFDI40113",  # CSD emisor no corresponde
     "CFDI40114",  # Emisor cancelado
+    "CFDI40139",  # Nombre emisor no coincide con RFC emisor
+    "CFDI40140",  # CSD no pertenece al emisor
+    "21001",      # Código genérico de error de emisor en algunos PACs
 }
 
 _PROBE_XML_TEMPLATE = dedent(
@@ -254,18 +257,27 @@ def validate_rfc_via_pac(
 
     pac_data = resp.get("provider_response", {})
 
-    # Extraer código de error SAT del response
+    # Extraer código de error SAT del response — varios formatos posibles
     error_code: str | None = None
     error_msg: str | None = None
     if isinstance(pac_data, dict):
-        # TimbraCFDI devuelve lista de errores en "Errores" o "errores"
+        # Formato 1: lista de errores en "Errores" o "errores"
         errores = pac_data.get("Errores") or pac_data.get("errores") or []
         if errores and isinstance(errores, list):
             first = errores[0]
-            error_code = str(first.get("CodigoError") or first.get("codigo") or "").strip()
-            error_msg = str(first.get("Descripcion") or first.get("mensaje") or "").strip()
+            error_code = str(first.get("CodigoError") or first.get("CodigoSat") or first.get("codigo") or "").strip()
+            error_msg = str(first.get("Descripcion") or first.get("Mensaje") or first.get("mensaje") or "").strip()
+        # Formato 2: error en nivel raíz (CodigoSat / Mensaje)
+        elif pac_data.get("CodigoSat") or pac_data.get("Codigo"):
+            raw_code = str(pac_data.get("CodigoSat") or pac_data.get("Codigo") or "").strip()
+            raw_msg = str(pac_data.get("Mensaje") or pac_data.get("mensaje") or "").strip()
+            # El CodigoSat puede ser "21001" mientras que el código SAT real está en el Mensaje "CFDI40139 - ..."
+            import re as _re
+            m = _re.match(r"(CFDI\d+)", raw_msg)
+            error_code = m.group(1) if m else raw_code
+            error_msg = raw_msg
         elif not resp["ok"]:
-            error_msg = str(pac_data.get("mensaje") or pac_data.get("message") or pac_data)[:200]
+            error_msg = str(pac_data.get("Mensaje") or pac_data.get("mensaje") or pac_data.get("message") or "")[:200]
 
     # Si timbró exitosamente → RFC definitivamente válido
     if resp["ok"] and not error_code:

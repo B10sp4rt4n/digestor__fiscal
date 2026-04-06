@@ -883,7 +883,7 @@ def download_billing_draft_pdf(
     folio = (draft.series or "PF") + "-" + (draft.folio or draft.id[:8])
 
     # --- helpers ---
-    def _f(v, default="—") -> str:
+    def _f(v, default="--") -> str:
         return str(v).strip() if v else default
 
     def _money(v) -> str:
@@ -909,14 +909,30 @@ def download_billing_draft_pdf(
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_margins(15, 15, 15)
-    W = pdf.w - 30  # ancho útil
+    W = pdf.w - 30
+
+    # Registrar fuente Unicode si DejaVuSans disponible, si no usar Helvetica
+    _font = "Helvetica"
+    try:
+        import os
+        for _dir in ("/usr/share/fonts/truetype/dejavu", "/usr/local/share/fonts", "/app/fonts"):
+            _regular = os.path.join(_dir, "DejaVuSans.ttf")
+            _bold = os.path.join(_dir, "DejaVuSans-Bold.ttf")
+            if os.path.isfile(_regular) and os.path.isfile(_bold):
+                pdf.add_font("DJV", "", _regular)
+                pdf.add_font("DJV", "B", _bold)
+                pdf.add_font("DJV", "I", _regular)  # fallback: regular as italic
+                _font = "DJV"
+                break
+    except Exception:
+        pass
 
     # Encabezado azul
     pdf.set_fill_color(29, 78, 216)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_font(_font, "B", 18)
     pdf.cell(W, 14, "PREFACTURA" if not is_stamped else "CFDI TIMBRADO", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font(_font, "", 9)
     label = f"Folio: {folio}"
     if is_stamped and uuid_cfdi:
         label += f"   |   UUID: {uuid_cfdi}"
@@ -930,11 +946,11 @@ def download_billing_draft_pdf(
 
     def _party_box(x, title, lines):
         pdf.set_xy(x, y_after)
-        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_font(_font, "B", 8)
         pdf.set_fill_color(241, 245, 249)
         pdf.cell(col, 6, title, fill=True, new_x="RIGHT", new_y="TOP")
         pdf.ln(0)
-        pdf.set_font("Helvetica", "", 8)
+        pdf.set_font(_font, "", 8)
         for line in lines:
             pdf.set_xy(x, pdf.get_y() + 6)
             pdf.multi_cell(col, 5, line)
@@ -962,20 +978,20 @@ def download_billing_draft_pdf(
     # Tabla de partidas
     pdf.set_fill_color(29, 78, 216)
     pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_font(_font, "B", 8)
     headers = [("#", 8), ("Clave", 20), ("Concepto", 80), ("Cant", 15), ("P.Unit", 25), ("Importe", 25)]
     for h, w in headers:
         pdf.cell(w, 7, h, border=1, fill=True)
     pdf.ln()
 
     pdf.set_text_color(0, 0, 0)
-    pdf.set_font("Helvetica", "", 8)
+    pdf.set_font(_font, "", 8)
     items = draft.items or []
     fill_row = False
     for i, item in enumerate(items, 1):
         pdf.set_fill_color(248, 250, 252) if fill_row else pdf.set_fill_color(255, 255, 255)
         desc = _f(item.description)
-        desc_short = desc[:55] + "…" if len(desc) > 55 else desc
+        desc_short = desc[:55] + "..." if len(desc) > 55 else desc
         pdf.cell(8, 6, str(i), border=1, fill=fill_row)
         pdf.cell(20, 6, _f(item.sku or item.sat_product_code), border=1, fill=fill_row)
         pdf.cell(80, 6, desc_short, border=1, fill=fill_row)
@@ -988,7 +1004,7 @@ def download_billing_draft_pdf(
     pdf.ln(4)
 
     # Totales
-    pdf.set_font("Helvetica", "", 9)
+    pdf.set_font(_font, "", 9)
     totales = [
         ("Subtotal", _money(draft.subtotal)),
         ("IVA (16%)", _money(draft.taxes)),
@@ -997,17 +1013,17 @@ def download_billing_draft_pdf(
     for label_t, valor in totales:
         pdf.set_x(15 + W - 60)
         bold = label_t == "TOTAL"
-        pdf.set_font("Helvetica", "B" if bold else "", 9 if not bold else 11)
+        pdf.set_font(_font, "B" if bold else "", 9 if not bold else 11)
         pdf.cell(35, 7, label_t, align="R")
         pdf.cell(25, 7, valor, align="R", border=1)
         pdf.ln()
 
     # Footer
     pdf.set_y(-20)
-    pdf.set_font("Helvetica", "I", 7)
+    pdf.set_font(_font, "I", 7)
     pdf.set_text_color(120, 120, 120)
     from datetime import date
-    pdf.cell(W, 5, f"Generado el {date.today().strftime('%d/%m/%Y')} — Digestor Fiscal", align="C")
+    pdf.cell(W, 5, f"Generado el {date.today().strftime('%d/%m/%Y')} - Digestor Fiscal", align="C")
 
     pdf_bytes = bytes(pdf.output())
 

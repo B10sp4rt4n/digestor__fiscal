@@ -141,6 +141,33 @@ def registra_emisor(
     return _normalize_response(response)
 
 
+def extract_stamped_document(result: dict[str, Any]) -> dict[str, Any]:
+    """Extrae el CFDI ya timbrado desde la respuesta cruda del PAC.
+
+    TimbraCFDI no regresa el XML que se le envió: regresa uno nuevo (campo `Xml`)
+    con el complemento de Timbre Fiscal Digital (sello, UUID) ya agregado. Guardar
+    el XML pre-timbrado como si fuera el resultado deja al comprobante sin UUID/sello.
+    """
+    provider_response = result.get("provider_response")
+    stamped_xml: str | None = None
+    uuid_value: str | None = None
+    codigo: Any = None
+
+    if isinstance(provider_response, dict):
+        stamped_xml = provider_response.get("Xml") or provider_response.get("xml") or None
+        codigo = provider_response.get("Codigo")
+        valores = provider_response.get("Valores") or {}
+        if isinstance(valores, dict):
+            uuid_value = valores.get("UUID") or valores.get("uuid")
+
+    success = bool(result.get("ok")) and (codigo is None or codigo == 0)
+    return {
+        "success": success,
+        "stamped_xml": stamped_xml,
+        "uuid": uuid_value,
+    }
+
+
 def timbra_cfdi(xml_base64: str, id_comprobante: str | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {"XmlComprobanteBase64": xml_base64}
     if id_comprobante:

@@ -1062,11 +1062,18 @@ def stamp_billing_draft(
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"No fue posible timbrar la prefactura: {exc}") from exc
 
-    draft.stamped_xml_base64 = xml_base64
-    draft.stamped_response_json = json.dumps(result.get("provider_response"), ensure_ascii=False)
-    draft.stamp_status = "stamped" if result.get("ok") else "rejected"
+    stamp_info = timbracfdi_client.extract_stamped_document(result)
+    stamped_xml_base64 = (
+        base64.b64encode(stamp_info["stamped_xml"].encode("utf-8")).decode("ascii")
+        if stamp_info["stamped_xml"]
+        else xml_base64
+    )
 
-    if result.get("ok"):
+    draft.stamped_xml_base64 = stamped_xml_base64
+    draft.stamped_response_json = json.dumps(result.get("provider_response"), ensure_ascii=False)
+    draft.stamp_status = "stamped" if stamp_info["success"] else "rejected"
+
+    if stamp_info["success"]:
         draft.stamped_at = datetime.utcnow()
         draft.status = "stamped"
         db.add(
@@ -1086,8 +1093,8 @@ def stamp_billing_draft(
 
     return BillingDraftStampResponse(
         draft=_serialize_draft(draft),
-        ok=bool(result.get("ok")),
+        ok=stamp_info["success"],
         remote_status_code=int(result.get("status_code", 0)),
         provider_response=result.get("provider_response"),
-        xml_base64=xml_base64,
+        xml_base64=stamped_xml_base64,
     )

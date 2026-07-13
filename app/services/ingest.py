@@ -159,13 +159,38 @@ def _normalize_label(label: str) -> str:
     return normalized
 
 
+_MONTH_ES: Dict[str, str] = {
+    "enero": "01", "febrero": "02", "marzo": "03", "abril": "04",
+    "mayo": "05", "junio": "06", "julio": "07", "agosto": "08",
+    "septiembre": "09", "octubre": "10", "noviembre": "11", "diciembre": "12",
+}
+
+
+def _normalize_date_es(value: str) -> str:
+    """Convierte 'DD DE MES DE YYYY' → 'DD/MM/YYYY' si aplica."""
+    if not value:
+        return value
+    m = re.fullmatch(
+        r"(\d{1,2})\s+DE\s+([A-ZÁÉÍÓÚÑa-záéíóúñ]+)\s+DE\s+(\d{4})",
+        value.strip(),
+        re.IGNORECASE,
+    )
+    if m:
+        month = _MONTH_ES.get(m.group(2).lower())
+        if month:
+            return f"{m.group(1).zfill(2)}/{month}/{m.group(3)}"
+    return value
+
+
 def _extract_colon_pairs(text: str) -> Dict[str, str]:
-    """Extrae pares clave:valor incluso cuando vienen múltiples campos en la misma línea."""
+    """Extrae pares clave:valor incluso cuando vienen múltiples campos en la misma línea
+    o cuando el valor está en la línea siguiente al label (tablas del PDF del SAT)."""
     pairs: Dict[str, str] = {}
-    for raw_line in text.replace("\r", "\n").split("\n"):
-        line = raw_line.strip()
+    lines = [raw.strip() for raw in text.replace("\r", "\n").split("\n")]
+    for i, line in enumerate(lines):
         if ":" not in line:
             continue
+        matched_any = False
         for match in re.finditer(
             r"([A-Za-zÁÉÍÓÚÑáéíóúñ0-9/().\- ]{2,90}):\s*([^:]+?)(?=(?:\s+[A-Za-zÁÉÍÓÚÑáéíóúñ0-9/().\- ]{2,90}:)|$)",
             line,
@@ -174,6 +199,22 @@ def _extract_colon_pairs(text: str) -> Dict[str, str]:
             value = _clean_field(match.group(2))
             if key and value and key not in pairs:
                 pairs[key] = value
+                matched_any = True
+        # Caso: "Etiqueta larga:" sin valor → buscar valor en línea(s) siguiente(s)
+        stripped = line.rstrip()
+        if stripped.endswith(":") and not matched_any:
+            key_part = stripped[:-1].strip()
+            if re.fullmatch(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9/().\- ]{2,90}", key_part):
+                for j in range(i + 1, min(i + 3, len(lines))):
+                    next_line = lines[j]
+                    if not next_line:
+                        continue
+                    if ":" not in next_line:
+                        key = _normalize_label(key_part)
+                        value = _clean_field(next_line)
+                        if key and value and key not in pairs:
+                            pairs[key] = value
+                    break
     return pairs
 
 
@@ -195,14 +236,18 @@ def _build_crm_autofill(fields: Dict[str, Any], pairs: Dict[str, str], include_e
         "curp": fields.get("curp") or "",
         "cif_id": fields.get("id_cif") or _pick_from_pairs(pairs, ["idCIF"]) or "",
         "status_padron": _pick_from_pairs(pairs, ["Estatus en el padrón", "Estatusenelpadrón"]) or "",
-        "start_operations_date": _pick_from_pairs(
-            pairs,
-            ["Fecha de inicio de operaciones", "Fechainiciodeoperaciones"],
-        ) or "",
-        "last_status_change_date": _pick_from_pairs(
-            pairs,
-            ["Fecha de último cambio de estado", "Fechadeúltimocambiodeestado"],
-        ) or "",
+        "start_operations_date": _normalize_date_es(
+            _pick_from_pairs(
+                pairs,
+                ["Fecha de inicio de operaciones", "Fechainiciodeoperaciones", "Fecha inicio de operaciones"],
+            ) or ""
+        ),
+        "last_status_change_date": _normalize_date_es(
+            _pick_from_pairs(
+                pairs,
+                ["Fecha de último cambio de estado", "Fechadeúltimocambiodeestado", "Fecha de ultimo cambio de estado"],
+            ) or ""
+        ),
         "street_type": _pick_from_pairs(pairs, ["Tipo de Vialidad", "TipodeVialidad"]) or "",
         "street_name": _pick_from_pairs(pairs, ["Nombre de Vialidad", "NombredeVialidad"]) or "",
         "ext_number": _pick_from_pairs(pairs, ["Número Exterior", "NumeroExterior", "NúmeroExterior"]) or "",

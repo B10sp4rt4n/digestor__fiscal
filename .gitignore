@@ -5,3 +5,10 @@ __pycache__/
 uploads/
 backups/
 .env
+
+# Credenciales fiscales (CSD/FIEL) — nunca deben trackearse en git
+*.cer
+*.key
+*.sdg
+*.pfx
+*.pem

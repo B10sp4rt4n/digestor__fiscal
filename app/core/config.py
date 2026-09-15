@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     TIMBRACFDI_TIMEOUT: int = 45
     TIMBRACFDI_EMIT_OFFSET_HOURS: int = 6
     TIMBRACFDI_DEMO_ENABLED: bool = True
+    TIMBRACFDI_USE_SOAP: bool = False
+    TIMBRACFDI_SOAP_URL: str = "https://timbracfdi33.mx:1443/Timbrado.asmx"
 
     # Developer-led GTM
     DEVELOPER_PORTAL_ENABLED: bool = True

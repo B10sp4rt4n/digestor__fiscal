@@ -1,4 +1,7 @@
 import base64
+import html
+import json as _json
+import re as _re
 from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 from typing import Any
@@ -104,13 +107,101 @@ def timbra_demo_cfdi(folio: str | None = None, id_comprobante: str | None = None
     return timbra_cfdi(xml_base64=xml_base64, id_comprobante=support_id)
 
 
-def ping() -> dict[str, Any]:
-    """Connectivity/auth probe against the documented timbrado endpoint.
+def _normalize_soap_response(response: requests.Response) -> dict[str, Any]:
+    """Parsea la respuesta SOAP de TimbracFDI33 y la normaliza al mismo formato que _normalize_response.
 
-    We intentionally send an empty payload so the provider returns a structured
-    response without needing a real XML CFDI. This is enough to validate reachability
-    and that the bearer token is being accepted by the gateway.
+    TimbracFDI33 codifica los valores de éxito con el opening tag HTML-escaped como prefijo:
+      <anyType>&lt;anyType xsi:type="xsd:string"&gt;VALUE</anyType>
+    En error los valores van directos:
+      <anyType xsi:type="xsd:string">Categoria</anyType>
+    Esta función normaliza ambos casos.
     """
+    try:
+        raw = response.text
+        raw_captures = _re.findall(r"<anyType[^>]*>(.+?)</anyType>", raw, _re.DOTALL)
+        values: list[str] = []
+        for v in raw_captures:
+            decoded = html.unescape(v.strip())
+            # Si el valor decodificado empieza con <anyType...> es el prefijo del response de éxito: quitarlo
+            inner = _re.match(r"<anyType[^>]*>(.*)", decoded, _re.DOTALL)
+            values.append(inner.group(1) if inner else decoded)
+    except Exception:
+        return {"ok": False, "status_code": response.status_code, "provider_response": {"raw": response.text[:1000]}}
+
+    if not values:
+        return {"ok": False, "status_code": response.status_code, "provider_response": {"raw": response.text[:500]}}
+
+    is_ok = values[0] == "0"
+
+    if is_ok:
+        provider: dict[str, Any] = {
+            "Codigo": 0,
+            "Xml": values[1] if len(values) > 1 else None,
+            "QrBase64": values[2] if len(values) > 2 else None,
+            "CadenaOriginal": values[3] if len(values) > 3 else None,
+        }
+        for v in reversed(values):
+            if v.startswith("[{"):
+                try:
+                    kv = {item["Key"]: item["Value"] for item in _json.loads(v)}
+                    provider["Valores"] = kv
+                    break
+                except Exception:
+                    pass
+    else:
+        provider = {
+            "Categoria": values[0] if len(values) > 0 else None,
+            "CodigoSat": values[1] if len(values) > 1 else None,
+            "Mensaje": values[2] if len(values) > 2 else None,
+        }
+        if len(values) > 3:
+            provider["Detalle"] = values[3]
+
+    return {"ok": is_ok, "status_code": 200 if is_ok else 400, "provider_response": provider}
+
+
+def _soap_request(operation: str, params: dict[str, str]) -> dict[str, Any]:
+    """Construye y envía un request SOAP a TimbracFDI33."""
+    _require_configured()
+    token = settings.timbracfdi_active_token
+    soap_url = settings.TIMBRACFDI_SOAP_URL
+
+    inner = f"<usuarioIntegrador>{token}</usuarioIntegrador>\n"
+    for key, val in params.items():
+        inner += f"      <{key}>{val}</{key}>\n"
+
+    soap_body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+        ' xmlns:xsd="http://www.w3.org/2001/XMLSchema"'
+        ' xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">'
+        "<soap:Body>"
+        f'<{operation} xmlns="http://tempuri.org/">'
+        f"      {inner}"
+        f"</{operation}>"
+        "</soap:Body>"
+        "</soap:Envelope>"
+    )
+    response = requests.post(
+        soap_url,
+        headers={
+            "Content-Type": "text/xml; charset=utf-8",
+            "SOAPAction": f'"http://tempuri.org/{operation}"',
+        },
+        data=soap_body.encode("utf-8"),
+        timeout=settings.TIMBRACFDI_TIMEOUT,
+    )
+    return _normalize_soap_response(response)
+
+
+def ping() -> dict[str, Any]:
+    """Connectivity/auth probe.
+
+    SOAP mode: envía TimbraCFDI vacío — el PAC responde con error de validación (no 500).
+    REST mode: envía payload vacío al endpoint REST.
+    """
+    if settings.TIMBRACFDI_USE_SOAP:
+        return _soap_request("TimbraCFDI", {})
     response = requests.post(
         f"{_base_url()}/Timbrado/TimbraCFDI",
         headers=_headers(),
@@ -126,6 +217,13 @@ def registra_emisor(
     base64_key: str,
     contrasena: str,
 ) -> dict[str, Any]:
+    if settings.TIMBRACFDI_USE_SOAP:
+        return _soap_request("RegistraEmisor", {
+            "rfcEmisor": rfc_emisor,
+            "base64Cer": base64_cer,
+            "base64Key": base64_key,
+            "contrasena": contrasena,
+        })
     payload = {
         "RfcEmisor": rfc_emisor,
         "Base64Cer": base64_cer,
@@ -169,10 +267,15 @@ def extract_stamped_document(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def timbra_cfdi(xml_base64: str, id_comprobante: str | None = None) -> dict[str, Any]:
+    if settings.TIMBRACFDI_USE_SOAP:
+        params: dict[str, str] = {"xmlComprobanteBase64": xml_base64}
+        if id_comprobante:
+            params["idComprobante"] = id_comprobante
+        return _soap_request("TimbraCFDI", params)
+
     payload: dict[str, Any] = {"XmlComprobanteBase64": xml_base64}
     if id_comprobante:
         payload["IdComprobante"] = id_comprobante
-
     response = requests.post(
         f"{_base_url()}/Timbrado/TimbraCFDI",
         headers=_headers(),

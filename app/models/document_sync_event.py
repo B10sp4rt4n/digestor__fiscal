@@ -20,6 +20,7 @@ class DocumentSyncEvent(Base):
     event_id = Column(String, nullable=False, unique=True, index=True)
     document_id = Column(String, nullable=False, index=True)
     delivery_status = Column(String, nullable=False, default="queued", index=True)
+    delivery_mode = Column(String, nullable=True)  # http | noop | unconfigured; null = legacy/unknown
     attempts = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
     last_attempt_at = Column(DateTime, nullable=True)

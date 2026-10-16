@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, Request
 from sqlalchemy.orm import Session
 
@@ -8,7 +6,7 @@ from app.db.session import get_db
 from app.models.csf import CSF
 from app.schemas.document_api import UniversalDocumentResponse, UniversalDocumentResult
 from app.schemas.sync_outbound import DocumentApproveRequest, DocumentApproveResponse
-from app.services import audit_service, job_service
+from app.services import audit_service, job_service, approval_service
 from app.services.document_queue import DocumentTask, document_queue
 
 router = APIRouter(prefix="/v1/documents", tags=["documents-v1"])
@@ -151,57 +149,14 @@ def approve_document_for_sync(
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
-    row = db.query(CSF).filter(CSF.id == document_id).first()
+    row = db.query(CSF).filter(CSF.id == document_id).with_for_update().first()
     if not row:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
-
-    # Siempre validamos acceso usando el company_id del documento.
-    # Ignoramos body.company_id para evitar errores cuando Swagger envía el valor de ejemplo.
     if not can_access_tenant(ctx, row.company_id):
         raise HTTPException(status_code=403, detail="No puedes acceder a este documento.")
-    cid = row.company_id
-
-    required_fields = {
-        "tax_id": bool((row.rfc or "").strip()),
-        "legal_name": bool((row.razon_social or "").strip()),
-        "tax_regime": bool((row.regimen or "").strip()),
-        "postal_code": bool((row.cp or "").strip()),
-        "cif_id": bool((row.id_cif or "").strip()),
-    }
-    missing = [field for field, ok in required_fields.items() if not ok]
-    if missing:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error_code": "VALIDATION_FAILED",
-                "message": "Documento no cumple criterios de aprobacion para sync.",
-                "details": {"missing_fields": missing},
-            },
-        )
-
-    approved_at = datetime.utcnow()
-    row.processing_status = "approved_for_sync"
-    row.status_reason = f"approved_by:{ctx.user_id}"
-    db.commit()
-    db.refresh(row)
-
-    audit_service.create_audit_log(
-        db,
-        company_id=cid,
-        user_id=ctx.user_id,
-        action="document_approved_for_sync",
-        entity_type="csf",
-        entity_id=row.id,
-        details={
-            "notes": body.notes,
-            "processing_status": row.processing_status,
-        },
-        status="success",
-    )
-
+    approval_service.approve(db, row, ctx.user_id, body.notes)
     return DocumentApproveResponse(
-        document_id=row.id,
-        company_id=cid,
-        status=row.processing_status,
-        approved_at=approved_at,
+        document_id=row.id, company_id=row.company_id,
+        status=row.processing_status, approved_at=row.approved_at,
+        approved_by=row.approved_by, approval_id=row.approval_id,
     )

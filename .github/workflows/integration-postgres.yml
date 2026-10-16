@@ -1,0 +1,51 @@
+name: Integration PostgreSQL
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: digestor_test
+          POSTGRES_PASSWORD: synthetic_test_only
+          POSTGRES_DB: digestor_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U digestor_test -d digestor_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DIGESTOR_POSTGRES_TEST_URL: postgresql+psycopg://digestor_test:synthetic_test_only@127.0.0.1:5432/digestor_test
+      AUTH_CONNECTOR: jwt
+      DB_SSL_REQUIRE: 'false'
+      GROQ_PARSER_ENABLED: 'false'
+      AI_FIELD_CORRECTION_ENABLED: 'false'
+      AI_FIELD_VALIDATION_ENABLED: 'false'
+      GEO_CP_ENABLED: 'false'
+      GEO_ADDRESS_ENABLED: 'false'
+      GEO_OPENCAGE_ENABLED: 'false'
+      SAT_ONLINE_VALIDATION: 'false'
+      SYNC_OUTBOUND_AUTOPOLL: 'false'
+      SYNC_OUTBOUND_ALLOW_NOOP_TARGET: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements-test.txt
+      - run: python -m pytest -q --junitxml=test-results.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-test-results
+          path: test-results.xml

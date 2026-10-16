@@ -44,8 +44,13 @@ arbitrarios. No activar en producción como actualización transparente.
 
 `pip install -r requirements-test.txt` y `python -m pytest -q`.
 
-Resultado local: **48 pruebas aprobadas** (incluye seis originales), con avisos de
-deprecación. Alembic identifica una sola cabeza: 20261016_01.
+Resultado local: **48 pruebas aprobadas** (incluye seis originales); las seis
+pruebas PostgreSQL se omiten sin DIGESTOR_POSTGRES_TEST_URL. En GitHub Actions,
+**54 pruebas aprobadas, sin omisiones**, sobre PostgreSQL 16.15 y Python 3.12,
+commit a0238e3a1ff2685694f0fef071d3885d06d986d8.
+Evidencia: https://github.com/B10sp4rt4n/digestor__fiscal/actions/runs/38943325599
+Alembic identifica una sola cabeza: 20261016_01. Se corrigió además el escape de
+porcentajes en URLs de conexión que ConfigParser rechazaba antes de migrar.
 
 Pruebas sintéticas: PDF real generado en memoria, parser y worker reales con cola
 capturada; JWT/roles/tenant; aprobación y snapshot; rollback ante fallo de auditoría;
@@ -53,11 +58,13 @@ reintentos/conflictos/claves por tenant; HTTP2xx/timeout/redirect; simulación y
 upgrade/downgrade de la migración nueva sobre esquema SQLite aislado.
 
 Un receptor HTTP loopback real verifica firma y deduplica dos entregas por event_id.
-No equivale a un receptor externo del cliente. La carrera de unicidad se inyecta
-controladamente; no demuestra comportamiento concurrente en PostgreSQL. La migración
-SQLite no sustituye ensayo de toda la cadena Alembic sobre PostgreSQL.
+No equivale a un receptor externo del cliente. Además de la carrera inyectada, CI ejecuta dos sesiones PostgreSQL simultáneas
+para claves iguales con intención igual/distinta y colisiones globales de event_id.
+Ejecuta la cadena completa Alembic desde esquema vacío, downgrade/upgrade de la
+última revisión conservando una fila sintética, replay desde nueva sesión y rollback
+conjunto de evento/auditoría. No utiliza una copia de la base productiva.
 
-Pendientes: concurrencia PostgreSQL, leases, cola durable, destinos/secretos por
+Pendientes: concurrencia de workers de entrega, leases, cola durable, destinos/secretos por
 cliente, timestamp anti-replay, auditoría completa/serializada y resolución humana
 de correcciones. El historial de auditoría conserva el diagnóstico previo a cambios.
 

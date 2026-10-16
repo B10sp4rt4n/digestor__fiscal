@@ -127,8 +127,8 @@ La creación del evento y su auditoría comparten transacción.
 - Campos documentales omitidos se refieren al snapshot original, incluso después
   de reingesta o nueva aprobación. Para emitir una revisión nueva, usar otra clave.
 - event_id tiene unicidad global; colisión devuelve 409 sin revelar otro tenant.
-- Colisiones de inserción hacen rollback y relectura del ganador. Pendiente probar
-  concurrencia real PostgreSQL; la suite incluye una carrera inyectada.
+- Colisiones de inserción hacen rollback y relectura del ganador. Concurrencia de inserción probada en PostgreSQL 16 con dos sesiones; no
+  equivale a probar múltiples workers de entrega.
 - La idempotencia del registro NO garantiza exactly-once en el receptor.
 
 ## 6. Entrega y evidencia
@@ -171,7 +171,8 @@ atómicas; concurrencia de la cadena y custodia externa están pendientes.
 
 ## 8. Criterio comercial
 
-Pruebas locales sintéticas respaldan un piloto aislado. No se han validado aquí
-PostgreSQL concurrente, recuperación de proceso, receptor externo de cliente ni
-SLAs productivos. 99.9% de disponibilidad, p95 de procesamiento y éxito de entrega
+Pruebas sintéticas locales y CI PostgreSQL 16 respaldan un piloto aislado.
+Se validaron migraciones, inserciones simultáneas y recuperación entre sesiones.
+No se validaron recuperación de proceso, workers concurrentes de entrega, receptor
+externo de cliente ni SLAs productivos. 99.9% de disponibilidad, p95 de procesamiento y éxito de entrega
 son objetivos por medir, no compromisos demostrados.

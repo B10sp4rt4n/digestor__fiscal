@@ -101,7 +101,7 @@ def enqueue_outbound_sync(
     "/outbound/{event_id}",
     response_model=OutboundSyncStatusResponse,
     summary="5) Consultar estado y evidencia del outbound",
-    description="Devuelve el estado (`queued`, `delivered`, etc.) y un `payload_preview` con el contenido realmente enviado.",
+    description="Devuelve el estado y un `payload_preview` del contenido persistido. `delivered` puede representar simulación si SYNC_OUTBOUND_ALLOW_NOOP_TARGET está activo sin webhook; no prueba recepción externa.",
 )
 def get_outbound_status(
     event_id: str,

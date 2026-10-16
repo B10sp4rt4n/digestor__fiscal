@@ -140,6 +140,9 @@ def register(
     if ctx.role != "superadmin" and body.tenant_id != ctx.tenant_id:
         raise HTTPException(status_code=403, detail="No puedes crear usuarios en otro tenant.")
 
+    if ctx.role != "superadmin" and body.role == "superadmin":
+        raise HTTPException(status_code=403, detail="Solo un superadmin puede asignar el rol superadmin.")
+
     if get_user_by_username(db, body.username):
         raise HTTPException(status_code=409, detail="El nombre de usuario ya existe.")
 

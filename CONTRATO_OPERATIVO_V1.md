@@ -1,5 +1,22 @@
 # Contrato Operativo V1 (Ingesta, Correccion por Evento y Sync Externo)
 
+> Estado auditado el 2026-10-16 sobre `9e251d7`: este documento mezcla
+> comportamiento disponible y requisitos objetivo. La aprobación y outbound ya
+> existen, pero no certifican integración productiva. Véase
+> [AUDITORIA_INTEGRACION_2026-10-16.md](AUDITORIA_INTEGRACION_2026-10-16.md).
+>
+> Compatibilidad V1 vigente: `Idempotency-Key` es opcional en HTTP. Omitirlo
+> crea una operación nueva con clave aleatoria; NO protege reintentos.
+> Los integradores deben enviar y conservar una clave estable por operación.
+> La unicidad persiste mientras exista la fila, sin expiración a las 24 horas.
+> Una misma clave devuelve el evento existente sin comparar payload; cambiar
+> documento o contenido con esa clave NO produce actualmente un conflicto.
+> Outbound responde HTTP 200 (202 es objetivo). `delivered` puede ser NOOP
+> sin receptor; `payload_preview` muestra datos persistidos, no un acuse externo.
+>
+> Las secciones de calidad, seguridad, SLA/SLO, errores y entrega describen
+> requisitos objetivo donde difieran de la matriz de capacidades de la auditoría.
+
 ## 1) Objetivo
 Definir un contrato unico para:
 - Carga masiva de documentos.
@@ -14,11 +31,14 @@ Este contrato sirve como base para SLAs/SLOs y para negociacion con clientes ent
 - POST /v1/documents: crea job y responde queued.
 - GET /v1/documents/{job_id}: consulta estado del job.
 - Upload/consulta CSF con field_validation campo por campo.
-- Audit trail inmutable con cadena hash.
+- Audit trail con cadena hash de contenido parcial; no constituye almacenamiento inmutable.
+- POST /v1/documents/{document_id}/approve: aprobación por presencia de cinco campos.
+- POST /v1/sync/outbound y GET /v1/sync/outbound/{event_id}: persistencia y consulta.
+- Worker outbound con HMAC, reintentos y estado failed_dlq; requiere validación externa.
 
 ### Estado objetivo inmediato
-- Aprobar documento para salida externa (gate de calidad).
-- Publicar evento de sincronizacion con idempotencia.
+- Reforzar aprobación con estado de job, formatos y field_validation.
+- Completar idempotencia con detección de conflictos y manejo concurrente.
 - Entregar payload normalizado estable con version de contrato.
 
 ## 3) Entidades Canonicas
@@ -131,7 +151,7 @@ Response 200 incluye:
 - corrected_json
 - field_validation (completo)
 
-## 5.3 Contrato objetivo de aprobacion (nuevo)
+## 5.3 Aprobacion implementada (gate objetivo pendiente)
 ### POST /v1/documents/{document_id}/approve
 Body:
 {
@@ -148,10 +168,10 @@ Response 200:
   "approved_at": "2026-03-29T20:00:00Z"
 }
 
-## 5.4 Contrato objetivo de salida externa (nuevo)
+## 5.4 Salida externa implementada (payload objetivo mostrado)
 ### POST /v1/sync/outbound
 Headers:
-- Idempotency-Key: string obligatorio
+- Idempotency-Key: opcional en la API V1; obligatorio para reintentos seguros del integrador
 
 Body:
 {
@@ -188,10 +208,14 @@ Response 202:
 }
 
 ## 6) Reglas de Idempotencia
-- Toda salida externa requiere Idempotency-Key.
-- La combinacion company_id + Idempotency-Key debe ser unica por 24h.
-- Reintento con misma clave devuelve misma respuesta semantica.
-- event_id debe ser unico globalmente.
+- API V1 acepta ausencia de clave y genera una nueva aleatoria por solicitud.
+- Integraciones con reintentos deben proporcionar una clave estable por operación.
+- company_id + Idempotency-Key es único sin TTL mientras exista el registro.
+- Misma clave devuelve el evento existente (su estado de entrega puede avanzar).
+- Actualmente no compara contenido; IDEMPOTENCY_CONFLICT es un requisito pendiente.
+- event_id tiene restricción única global; colisiones no se traducen aún a error de dominio.
+- No se garantiza exclusión de envíos simultáneos ni exactly-once en el receptor.
+- Exigir la cabecera o introducir expiración requiere transición/versionado explícito.
 
 ## 7) Errores Estandar
 Formato:

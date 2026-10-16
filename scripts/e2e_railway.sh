@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-API_URL="${API_URL:-https://digestorfiscal-production.up.railway.app}"
-PDF_PATH="${PDF_PATH:-/workspaces/digestor__fiscal/uploads/1774707147_Csf_SAS2108197G0.pdf}"
+# Explicit opt-in: use an isolated test deployment and a synthetic fixture.
+: "${API_URL:?Define API_URL con un entorno de pruebas aislado}"
+: "${PDF_PATH:?Define PDF_PATH con un PDF sintetico}"
 
 if [[ ! -f "$PDF_PATH" ]]; then
   echo "ERROR: no existe PDF_PATH=$PDF_PATH"
@@ -82,7 +83,7 @@ OUTBOUND=$(curl -s -X POST "$API_URL/v1/sync/outbound" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: $IDEMP" \
-  -d "{\"event_type\":\"document.approved\",\"event_id\":\"$EVENT_ID\",\"event_time\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"document\":{\"document_id\":\"$DOCUMENT_ID\",\"csf_hash\":\"demo-hash\",\"normalized_payload\":{\"source\":\"e2e-script\"},\"quality\":{\"required_fields_ok\":true,\"score\":0.99,\"missing_fields\":[]}}}")
+  -d "{\"event_type\":\"document.approved\",\"event_id\":\"$EVENT_ID\",\"document\":{\"document_id\":\"$DOCUMENT_ID\"}}")
 echo "$OUTBOUND" | python3 -m json.tool
 
 OUTBOUND_ERROR=$(echo "$OUTBOUND" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("detail",""))')
@@ -101,4 +102,4 @@ if [[ -n "$STATUS_ERROR" ]]; then
   exit 4
 fi
 
-echo "OK: flujo e2e completado"
+echo "OK: registro y consulta outbound completados; entrega externa NO verificada"

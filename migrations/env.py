@@ -25,7 +25,8 @@ config = context.config
 # Leer DB_URL o DATABASE_URL desde variable de entorno si está disponible
 db_url = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
 if db_url:
-    config.set_main_option("sqlalchemy.url", db_url)
+    # ConfigParser treats percent-encoded URL characters as interpolation.
+    config.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

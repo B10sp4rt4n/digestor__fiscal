@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     SYNC_OUTBOUND_POLL_SECONDS: int = 5
     SYNC_OUTBOUND_WEBHOOK_URL: Optional[str] = None
     SYNC_OUTBOUND_MAX_ATTEMPTS: int = 6
-    SYNC_OUTBOUND_ALLOW_NOOP_TARGET: bool = True
+    SYNC_OUTBOUND_ALLOW_NOOP_TARGET: bool = False
 
     # Facturación / Timbrado CFDI
     # Flujo recomendado: dejar `TIMBRACFDI_ENV=sandbox` mientras el PAC no active productivo.

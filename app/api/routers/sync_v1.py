@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from app.core.auth import SecurityContext, enforce_tenant_scope, role_guard
 from app.db.session import get_db
 from app.models.csf import CSF
-from app.schemas.sync_outbound import OutboundSyncRequest, OutboundSyncResponse, OutboundSyncStatusResponse
-from app.services import audit_service, sync_outbound_service
+from app.schemas.sync_outbound import OutboundDocument, OutboundSyncRequest, OutboundSyncResponse, OutboundSyncStatusResponse
+from app.services import audit_service, sync_outbound_service, approval_service
 
 router = APIRouter(prefix="/v1/sync", tags=["sync-v1"])
 
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/v1/sync", tags=["sync-v1"])
     "/outbound",
     response_model=OutboundSyncResponse,
     summary="4) Enviar documento aprobado al flujo outbound",
-    description="Puedes mandar solo `document.document_id`. El resto se auto-completa desde la BD y `Idempotency-Key` es opcional.",
+    description="Puedes mandar solo `document.document_id`. Se usa el snapshot aprobado. `Idempotency-Key` es opcional, pero debes enviarla para reintentos seguros.",
 )
 def enqueue_outbound_sync(
     body: OutboundSyncRequest,
@@ -30,70 +30,51 @@ def enqueue_outbound_sync(
     if body.contract_version != "v1.0":
         raise HTTPException(status_code=400, detail="contract_version no soportada.")
 
-    # Idempotency-Key es opcional; si no viene, se genera uno único
-    if not idempotency_key:
-        idempotency_key = f"auto-{secrets.token_hex(8)}"
+    if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 255):
+        raise HTTPException(422, detail="Idempotency-Key debe tener entre 1 y 255 caracteres no vacíos.")
+    idempotency_key = idempotency_key or f"auto-{secrets.token_hex(16)}"
 
-    csf = db.query(CSF).filter(CSF.id == body.document.document_id).first()
-    if not csf or csf.company_id != cid:
-        raise HTTPException(status_code=404, detail="Documento no encontrado para el tenant.")
-
-    # Auto-completar campos desde la BD si el caller no los envió
-    if body.document.csf_hash is None:
-        body.document.csf_hash = csf.csf_hash or ""
-    if body.document.normalized_payload is None:
-        body.document.normalized_payload = {
-            "rfc": csf.rfc,
-            "razon_social": csf.razon_social,
-            "regimen": csf.regimen,
-            "cp": csf.cp,
-            "curp": csf.curp,
-            "id_cif": csf.id_cif,
-        }
-    if body.document.quality is None:
-        from app.schemas.sync_outbound import OutboundQuality
-        missing = [f for f, v in {
-            "rfc": csf.rfc, "razon_social": csf.razon_social,
-            "regimen": csf.regimen, "cp": csf.cp, "id_cif": csf.id_cif,
-        }.items() if not v]
-        body.document.quality = OutboundQuality(
-            required_fields_ok=len(missing) == 0,
-            score=round(1.0 - len(missing) / 5, 2),
-            missing_fields=missing,
+    # A retry retrieves the original operation, even after reingestion/reapproval.
+    existing = sync_outbound_service.get_by_idempotency_key(db, cid, idempotency_key)
+    if existing:
+        sync_outbound_service.check_replay(existing, body)
+        return OutboundSyncResponse(
+            accepted=True, event_id=existing.event_id, delivery_status=existing.delivery_status,
+            delivery_mode=existing.delivery_mode, idempotency_key=existing.idempotency_key,
         )
 
-    if csf.processing_status != "approved_for_sync":
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error_code": "NOT_APPROVED_FOR_SYNC",
-                "message": "El documento aun no fue aprobado para sincronizacion.",
-                "details": {"document_id": body.document.document_id},
-            },
-        )
-
-    event, created = sync_outbound_service.enqueue_outbound_event(db, cid, idempotency_key, body)
-
-    audit_service.create_audit_log(
-        db,
-        company_id=cid,
-        user_id=ctx.user_id,
-        action="sync_outbound_enqueued",
-        entity_type="document_sync_event",
-        entity_id=event.id,
-        details={
-            "event_id": event.event_id,
-            "idempotency_key": idempotency_key,
-            "created": created,
-            "delivery_status": event.delivery_status,
-        },
-        status="success",
-    )
-
+    csf = db.query(CSF).filter_by(id=body.document.document_id, company_id=cid).with_for_update().first()
+    if not csf:
+        raise HTTPException(404, detail="Documento no encontrado para el tenant.")
+    snapshot = approval_service.approved_document(csf)
+    # Caller may echo the snapshot, never substitute approved data or quality.
+    for name, value in body.document.model_dump(mode="json").items():
+        if value is not None and value != snapshot.get(name):
+            raise HTTPException(409, detail={
+                "error_code": "APPROVED_PAYLOAD_MISMATCH",
+                "message": "El contenido enviado no coincide con el documento aprobado.",
+                "details": {"field": name}, "retryable": False,
+            })
+    body = body.model_copy(deep=True)
+    body.company_id = cid
+    body.document = OutboundDocument.model_validate(snapshot)
+    try:
+        event, created = sync_outbound_service.enqueue_outbound_event(db, cid, idempotency_key, body, commit=False)
+        if created:
+            audit_service.create_audit_log(
+                db, company_id=cid, user_id=ctx.user_id, action="sync_outbound_enqueued",
+                entity_type="document_sync_event", entity_id=event.id,
+                details={"event_id": event.event_id, "idempotency_key": idempotency_key,
+                         "approval_id": csf.approval_id, "delivery_status": event.delivery_status},
+                status="success", commit=False,
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return OutboundSyncResponse(
-        accepted=True,
-        event_id=event.event_id,
-        delivery_status=event.delivery_status,
+        accepted=True, event_id=event.event_id, delivery_status=event.delivery_status,
+        delivery_mode=event.delivery_mode, idempotency_key=event.idempotency_key,
     )
 
 
@@ -101,7 +82,7 @@ def enqueue_outbound_sync(
     "/outbound/{event_id}",
     response_model=OutboundSyncStatusResponse,
     summary="5) Consultar estado y evidencia del outbound",
-    description="Devuelve el estado y un `payload_preview` del contenido persistido. `delivered` puede representar simulación si SYNC_OUTBOUND_ALLOW_NOOP_TARGET está activo sin webhook; no prueba recepción externa.",
+    description="Devuelve el estado y un `payload_preview` del contenido persistido. `simulated` identifica NOOP; `delivered` con delivery_mode=http indica respuesta HTTP exitosa, no procesamiento empresarial. Registros legacy sin modo no prueban recepción.",
 )
 def get_outbound_status(
     event_id: str,
@@ -123,6 +104,8 @@ def get_outbound_status(
             "event_time": payload.get("event_time"),
             "document": {
                 "document_id": doc.get("document_id"),
+                "approval_id": doc.get("approval_id"),
+                "csf_hash": doc.get("csf_hash"),
                 "document_type": doc.get("document_type"),
                 "normalized_payload": doc.get("normalized_payload"),
                 "quality": doc.get("quality"),
@@ -136,6 +119,7 @@ def get_outbound_status(
         company_id=event.company_id,
         document_id=event.document_id,
         delivery_status=event.delivery_status,
+        delivery_mode=event.delivery_mode,
         payload_preview=payload_preview,
         attempts=event.attempts,
         last_error=event.last_error,

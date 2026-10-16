@@ -46,6 +46,7 @@ def create_audit_log(
     user_agent: Optional[str] = None,
     status: str = "success",
     error_message: Optional[str] = None,
+    commit: bool = True,
 ) -> AuditLog:
     """Crear una nueva entrada de auditoría con cadena inmutable."""
     
@@ -79,8 +80,11 @@ def create_audit_log(
         sequence_number=sequence_number,
     )
     db.add(log)
-    db.commit()
-    db.refresh(log)
+    if commit:
+        db.commit()
+        db.refresh(log)
+    else:
+        db.flush()
     return log
 
 

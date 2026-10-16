@@ -1,289 +1,177 @@
-# Contrato Operativo V1 (Ingesta, Correccion por Evento y Sync Externo)
+# Contrato operativo V1: ingesta, aprobación y salida
 
-> Estado auditado el 2026-10-16 sobre `9e251d7`: este documento mezcla
-> comportamiento disponible y requisitos objetivo. La aprobación y outbound ya
-> existen, pero no certifican integración productiva. Véase
-> [AUDITORIA_INTEGRACION_2026-10-16.md](AUDITORIA_INTEGRACION_2026-10-16.md).
->
-> Compatibilidad V1 vigente: `Idempotency-Key` es opcional en HTTP. Omitirlo
-> crea una operación nueva con clave aleatoria; NO protege reintentos.
-> Los integradores deben enviar y conservar una clave estable por operación.
-> La unicidad persiste mientras exista la fila, sin expiración a las 24 horas.
-> Una misma clave devuelve el evento existente sin comparar payload; cambiar
-> documento o contenido con esa clave NO produce actualmente un conflicto.
-> Outbound responde HTTP 200 (202 es objetivo). `delivered` puede ser NOOP
-> sin receptor; `payload_preview` muestra datos persistidos, no un acuse externo.
->
-> Las secciones de calidad, seguridad, SLA/SLO, errores y entrega describen
-> requisitos objetivo donde difieran de la matriz de capacidades de la auditoría.
+Este documento describe los cambios propuestos en el PR de endurecimiento del
+16 de octubre de 2026. No demuestra que estén desplegados. La revisión histórica
+sobre main está en [AUDITORIA_INTEGRACION_2026-10-16.md](AUDITORIA_INTEGRACION_2026-10-16.md).
+La transición se detalla en [INTEGRACION_ROLLOUT.md](INTEGRACION_ROLLOUT.md).
 
-## 1) Objetivo
-Definir un contrato unico para:
-- Carga masiva de documentos.
-- Correccion por evento (campo/documento).
-- Entrega hacia CRM u otros sistemas.
+## 1. Alcance y autenticación
 
-Este contrato sirve como base para SLAs/SLOs y para negociacion con clientes enterprise.
+JWT por tenant; roles operator/admin/superadmin pueden cargar, aprobar y registrar
+salidas. Viewer puede consultar CSF y estado outbound, pero no aprobar ni cargar.
+La consulta de jobs requiere operator/admin/superadmin. Superadmin tiene acceso
+entre tenants. Solo superadmin puede crear otro superadmin. El actor de aprobación
+se obtiene del JWT, nunca de approved_by en el cuerpo.
 
-## 2) Estado Actual vs Estado Objetivo
+La configuración de producción debe usar JWT, sin acceso anónimo ni credenciales
+predeterminadas. Los modos none/header son alternativas de configuración, no una
+garantía equivalente. No se certifica seguridad productiva mediante este contrato.
 
-### Estado actual implementado
-- POST /v1/documents: crea job y responde queued.
-- GET /v1/documents/{job_id}: consulta estado del job.
-- Upload/consulta CSF con field_validation campo por campo.
-- Audit trail con cadena hash de contenido parcial; no constituye almacenamiento inmutable.
-- POST /v1/documents/{document_id}/approve: aprobación por presencia de cinco campos.
-- POST /v1/sync/outbound y GET /v1/sync/outbound/{event_id}: persistencia y consulta.
-- Worker outbound con HMAC, reintentos y estado failed_dlq; requiere validación externa.
+## 2. Carga y consulta
 
-### Estado objetivo inmediato
-- Reforzar aprobación con estado de job, formatos y field_validation.
-- Completar idempotencia con detección de conflictos y manejo concurrente.
-- Entregar payload normalizado estable con version de contrato.
+- `POST /v1/documents`: multipart file PDF, document_type=csf, company_id opcional
+  (resuelto desde JWT), validate_online=false por defecto. Responde HTTP 200 con
+  job_id, status=queued, document_type y company_id.
+- `GET /v1/documents/{job_id}`: queued/processing/done/failed; en done devuelve
+  document_id y referencia al PDF. No devuelve un payload empresarial completo.
+- `GET /csf/{csf_id}`: datos y validación persistidos; opciones de enriquecimiento
+  pueden ejecutar IA/geocodificación según configuración.
+- ZIP está disponible en `/upload/zip` legacy, no en `/v1/documents`.
+- csf_hash es SHA256(company_id + ':' + SHA256(bytes)), no el hash directo del PDF.
 
-## 3) Entidades Canonicas
+La cola de procesamiento sigue en memoria. El job se persiste, pero su recuperación
+tras caída de proceso no está garantizada. La validación online no certifica
+identidad ni autenticidad fiscal ante SAT.
 
-### 3.1 DocumentJob
-- job_id: string (uuid)
-- company_id: string
-- document_type: string (ej. csf)
-- status: queued | processing | done | failed
-- document_id: string|null
-- error: string|null
-- created_at, started_at, completed_at: datetime ISO8601
-- processing_time_ms: integer|null
+## 3. Aprobación verificable
 
-### 3.2 DocumentRecord (normalizado para integracion)
-- document_id: string
-- company_id: string
-- document_type: csf
-- parser_source: regex | hybrid_groq
-- processing_status: processed | needs_review | pending_qr | incomplete | duplicate
-- source_filename: string|null
-- uploaded_at: datetime|null
-- csf_hash: string
-- extracted:
-  - rfc
-  - razon_social
-  - regimen
-  - cp
-  - curp
-  - id_cif
-  - qr_text
-  - qr_valid
-  - qr_online
-- field_validation: arreglo completo de campos (si/no por campo)
-- corrected_json: objeto normalizado tras correccion
+`POST /v1/documents/{document_id}/approve`, body `{}` o `{"notes":"revisado"}`.
+company_id en este body se conserva por compatibilidad pero el alcance se obtiene
+del documento y se verifica contra JWT.
 
-### 3.3 FieldValidation (obligatorio completo)
-Un elemento por cada campo esperado del contrato:
-- field: string
-- label: string
-- value: string|null
-- status: si | no
-- is_ok: boolean
-- reason: ok | faltante | formato_invalido | mensaje de correccion
-- suggested_value: string|null
-- confidence: float|null
+Requisitos:
 
-## 4) Flujo y Maquina de Estados
+1. Último job vinculado al documento y tenant en done y sin error.
+2. processing_status en processed, pending_qr, duplicate o approved_for_sync.
+   needs_review/incomplete no se aprueban. QR no es un requisito fiscal adicional
+   de este gate: pending_qr permite revisión de los cinco campos requeridos.
+3. RFC, razón social, régimen, CP e idCIF presentes y válidos con validadores
+   locales compartidos; se rechazan placeholders DESCONOCIDO/SIN NOMBRE.
+4. Para cada requerido, field_validation persistido debe tener status=si,
+   is_ok=true y value coincidente con el valor actual. Reportes incompletos,
+   negativos o desactualizados se rechazan. No se invoca IA durante aprobación.
 
-### 4.1 Flujo de procesamiento
-1. Cliente envia documento.
-2. API responde queued rapido con job_id.
-3. Worker procesa y cambia a processing.
-4. Worker termina en done o failed.
-5. Cliente consulta estado por job_id.
+Respuesta HTTP 200: document_id, company_id, status=approved_for_sync,
+approved_at, approved_by, approval_id. Se persiste un snapshot del contenido
+aprobado. Aprobar otra vez sin cambios conserva actor, fecha e identificador.
+Una nueva aprobación de contenido diferente recibe otro approval_id.
+Aprobación y su evento de auditoría se confirman en la misma transacción.
 
-### 4.2 Flujo de calidad y salida
-1. Documento en done.
-2. Operacion revisa field_validation.
-3. Correccion por evento (si aplica).
-4. Documento pasa a approved_for_sync.
-5. Se emite evento document.approved.
-6. Se publica a CRM/ERP con idempotencia.
+Documentos legacy sin job deben reingresarse por V1; no se fabrica evidencia de
+procesamiento. Las correcciones IA pendientes pueden impedir aprobación; no existe
+aún un flujo completo de resolución humana de todas esas correcciones.
 
-## 5) Endpoints del Contrato
+## 4. Registro outbound
 
-## 5.1 Ingesta
-### POST /v1/documents
-Request multipart:
-- file: binary
-- document_type: csf
-- company_id: string
-- validate_online: boolean
+`POST /v1/sync/outbound`, HTTP 200 (se conserva por compatibilidad).
 
-Response 200:
+Cabecera `Idempotency-Key`: opcional en HTTP; necesaria para reintentar con
+seguridad. Si se omite, se genera clave aleatoria y se devuelve en la respuesta.
+Si se pierde la primera respuesta sin haber enviado clave, no hay garantía de
+deduplicación. Clave explícita: 1 a 255 caracteres, no solo espacios.
+
+Request mínimo:
+
+```json
+{"document":{"document_id":"UUID_APROBADO"}}
+```
+
+Defaults: contract_version=v1.0, event_type=csf_sync, event_id y event_time
+se generan si se omiten. El ejemplo document.approved es una alternativa, no un
+evento emitido automáticamente al aprobar. La salida requiere una llamada separada.
+
+El servidor resuelve company_id y utiliza el snapshot aprobado. El cliente puede
+ecoar csf_hash, normalized_payload, quality, document_type y approval_id, pero no
+sustituirlos por otros valores. Datos distintos producen HTTP 409
+APPROVED_PAYLOAD_MISMATCH. Si la fila cambió desde la aprobación, se devuelve
+APPROVAL_STALE. Una aprobación antigua sin snapshot requiere nueva aprobación.
+
+Payload persistido y enviado:
+
+```json
 {
-  "job_id": "uuid",
-  "status": "queued",
-  "document_type": "csf",
-  "company_id": "demo-company",
-  "document_id": null,
-  "result": null,
-  "error": null
-}
-
-### GET /v1/documents/{job_id}
-Response 200 (done):
-{
-  "job_id": "uuid",
-  "status": "done",
-  "document_type": "csf",
-  "company_id": "demo-company",
-  "document_id": "uuid",
-  "result": {
-    "normalized_fields": {"document_id": "uuid"},
-    "validation_flags": {},
-    "artifacts": {
-      "pdf_download_path": "/csf/{document_id}/pdf",
-      "processing_time_ms": 12345
-    }
-  },
-  "error": null
-}
-
-## 5.2 Documento enriquecido
-### GET /csf/{csf_id}?include_ai_corrections=true
-Response 200 incluye:
-- crm_autofill
-- ai_field_corrections
-- corrected_json
-- field_validation (completo)
-
-## 5.3 Aprobacion implementada (gate objetivo pendiente)
-### POST /v1/documents/{document_id}/approve
-Body:
-{
-  "company_id": "demo-company",
-  "approved_by": "user-id",
-  "notes": "revision completada"
-}
-
-Response 200:
-{
-  "document_id": "uuid",
-  "company_id": "demo-company",
-  "status": "approved_for_sync",
-  "approved_at": "2026-03-29T20:00:00Z"
-}
-
-## 5.4 Salida externa implementada (payload objetivo mostrado)
-### POST /v1/sync/outbound
-Headers:
-- Idempotency-Key: opcional en la API V1; obligatorio para reintentos seguros del integrador
-
-Body:
-{
-  "contract_version": "v1.0",
-  "event_type": "document.approved",
-  "event_id": "uuid",
-  "event_time": "2026-03-29T20:00:00Z",
-  "company_id": "demo-company",
-  "document": {
-    "document_id": "uuid",
-    "document_type": "csf",
-    "csf_hash": "sha256",
-    "normalized_payload": {
-      "tax_id": "...",
-      "legal_name": "...",
-      "tax_regime": "...",
-      "postal_code": "...",
-      "curp": "...",
-      "cif_id": "..."
+  "contract_version":"v1.0",
+  "event_type":"csf_sync",
+  "event_id":"evt-...",
+  "event_time":"2026-10-16T17:00:00Z",
+  "company_id":"tenant-resuelto",
+  "document":{
+    "document_id":"uuid",
+    "document_type":"csf",
+    "approval_id":"uuid",
+    "csf_hash":"hash-tenant",
+    "normalized_payload":{
+      "rfc":"...", "razon_social":"...", "regimen":"...",
+      "cp":"...", "curp":null, "id_cif":"..."
     },
-    "quality": {
-      "required_fields_ok": true,
-      "score": 0.95,
-      "missing_fields": []
-    }
+    "quality":{"required_fields_ok":true,"score":1.0,"missing_fields":[]}
   }
 }
+```
 
-Response 202:
-{
-  "accepted": true,
-  "event_id": "uuid",
-  "delivery_status": "queued"
-}
+score=1 representa que los cinco campos pasaron este gate local, no una probabilidad
+de autenticidad fiscal. Se mantienen nombres V1; tax_id/legal_name/postal_code son
+nombres del reporte CRM, no los nombres outbound actuales.
 
-## 6) Reglas de Idempotencia
-- API V1 acepta ausencia de clave y genera una nueva aleatoria por solicitud.
-- Integraciones con reintentos deben proporcionar una clave estable por operación.
-- company_id + Idempotency-Key es único sin TTL mientras exista el registro.
-- Misma clave devuelve el evento existente (su estado de entrega puede avanzar).
-- Actualmente no compara contenido; IDEMPOTENCY_CONFLICT es un requisito pendiente.
-- event_id tiene restricción única global; colisiones no se traducen aún a error de dominio.
-- No se garantiza exclusión de envíos simultáneos ni exactly-once en el receptor.
-- Exigir la cabecera o introducir expiración requiere transición/versionado explícito.
+Respuesta: accepted, event_id, delivery_status, delivery_mode e idempotency_key.
+La creación del evento y su auditoría comparten transacción.
 
-## 7) Errores Estandar
-Formato:
-{
-  "error_code": "STRING",
-  "message": "texto humano",
-  "details": {},
-  "retryable": true
-}
+## 5. Idempotencia
 
-Codigos minimos:
-- INVALID_DOCUMENT
-- UNSUPPORTED_DOCUMENT_TYPE
-- TENANT_FORBIDDEN
-- JOB_NOT_FOUND
-- VALIDATION_FAILED
-- NOT_APPROVED_FOR_SYNC
-- IDEMPOTENCY_CONFLICT
-- EXTERNAL_DELIVERY_FAILED
+- company_id + clave es único mientras exista la fila, sin TTL de 24 horas.
+- Misma clave y misma intención devuelve el evento original; su estado puede avanzar.
+- Documento, tipo/versión de evento, contenido explícito o metadatos explícitos
+  distintos producen 409 IDEMPOTENCY_CONFLICT. No se sobrescribe el evento previo.
+- event_id/event_time omitidos se refieren al evento original; los autogenerados
+  de un nuevo request no causan un falso conflicto.
+- Campos documentales omitidos se refieren al snapshot original, incluso después
+  de reingesta o nueva aprobación. Para emitir una revisión nueva, usar otra clave.
+- event_id tiene unicidad global; colisión devuelve 409 sin revelar otro tenant.
+- Colisiones de inserción hacen rollback y relectura del ganador. Pendiente probar
+  concurrencia real PostgreSQL; la suite incluye una carrera inyectada.
+- La idempotencia del registro NO garantiza exactly-once en el receptor.
 
-## 8) SLA/SLO Targets
+## 6. Entrega y evidencia
 
-## 8.1 Disponibilidad
-- API lectura/escritura: 99.9% mensual.
+`GET /v1/sync/outbound/{event_id}` respeta tenant y devuelve estado, intentos,
+fechas, error y payload_preview. El preview es contenido persistido, no acuse.
 
-## 8.2 Latencia
-- POST /v1/documents (ack queued): p95 <= 1.5s, p99 <= 3s.
-- GET /v1/documents/{job_id}: p95 <= 500ms.
+| Estado/modo | Significado |
+|---|---|
+| queued | Registrado, pendiente de intento |
+| delivered + http | Endpoint respondió 2xx; no demuestra procesamiento empresarial |
+| simulated + noop | Simulación explícita; no hubo red y delivered_at es null |
+| retry | Pendiente de reintento tras fallo |
+| failed_dlq | Fallo terminal en tabla; no existe cola externa de redrive |
+| blocked_review | Evento antiguo/malformado sin approval_id; requiere revisión |
+| modo null | Sin intento nuevo o evidencia legacy desconocida |
 
-## 8.3 Procesamiento
-- Tiempo queued -> processing: p95 <= 10s.
-- Tiempo processing -> done (PDF estandar): p95 <= 120s, p99 <= 300s.
+NOOP está desactivado por defecto. Sin URL, el evento pasa a retry/failed_dlq;
+no se marca delivered. NOOP=true sin URL produce simulated. No se reinterpretan
+entregas históricas sin evidencia del modo usado.
 
-## 8.4 Calidad de datos
-- Completitud minima de campos requeridos para aprobar: >= 95%.
-- Tasa de parse fallido (failed): <= 2% mensual.
+El worker transmite X-Signature HMAC del payload, X-Event-Id e Idempotency-Key.
+No sigue redirects; solo 2xx cuenta como entrega HTTP. Sigue usando URL y secreto
+globales. Timestamp anti-replay, destinos por tenant, claims/leases y exclusión de
+workers son pendientes. El receptor debe deduplicar por tenant+event_id.
 
-## 8.5 Entrega externa
-- approved_for_sync -> queued outbound: <= 5s p95.
-- delivery success a endpoint cliente: >= 99% con reintentos.
-- Reintentos: 1m, 5m, 15m, 60m, 6h, 24h.
+Backoff definido: 1m, 5m, 15m, 60m, 6h, 24h. MAX_ATTEMPTS=6 implica intento inicial
+más cinco reintentos: no se alcanza la demora de 24h con ese límite.
 
-## 8.6 Trazabilidad
-- 100% de cambios relevantes con entrada en audit trail inmutable.
-- Verificacion de cadena de auditoria debe mantenerse valida en todo momento.
+## 7. Errores y límites de auditoría
 
-## 9) Criterios de Aprobacion para Sync
-Un documento puede pasar a approved_for_sync solo si:
-- status job = done.
-- no existe error de parse.
-- campos requeridos en si: tax_id, legal_name, tax_regime, postal_code, cif_id.
-- field_validation de requeridos = si.
-- validaciones de formato requeridas aprobadas.
+Los nuevos errores de dominio usan detail={error_code,message,details,retryable}.
+Persisten respuestas FastAPI de texto/validación en otras rutas; no se promete un
+sobre universal todavía. VALIDATION_FAILED y NOT_APPROVED_FOR_SYNC usan 422;
+conflictos de aprobación/contenido/idempotencia usan 409.
 
-## 10) Seguridad y Firma
-- Auth JWT por tenant.
-- Scope por tenant obligatorio en todos los eventos.
-- Para webhooks/salida: firma HMAC del payload y timestamp anti-replay.
+La cadena de auditoría sigue protegiendo contenido parcial. No es almacenamiento
+inmutable ni protege todos los metadatos. La entrega y su auditoría aún no son
+atómicas; concurrencia de la cadena y custodia externa están pendientes.
 
-## 11) Versionado de Contrato
-- contract_version en payload (ej. v1.0).
-- Cambios breaking solo con nueva version (v2.0).
-- Cambios non-breaking permitidos en misma version (campos opcionales).
+## 8. Criterio comercial
 
-## 12) Definicion de Listo (para pasar a implementacion)
-- Esquemas JSON definidos y validados.
-- Endpoints nuevos de approve/outbound creados.
-- Idempotencia persistida en BD.
-- Reintentos y DLQ definidos.
-- Dashboards con SLIs: latencia, error rate, backlog, delivery success.
-- Runbooks para incidentes y degradacion controlada.
+Pruebas locales sintéticas respaldan un piloto aislado. No se han validado aquí
+PostgreSQL concurrente, recuperación de proceso, receptor externo de cliente ni
+SLAs productivos. 99.9% de disponibilidad, p95 de procesamiento y éxito de entrega
+son objetivos por medir, no compromisos demostrados.

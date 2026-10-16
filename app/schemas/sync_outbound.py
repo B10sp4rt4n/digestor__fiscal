@@ -21,6 +21,8 @@ class DocumentApproveResponse(BaseModel):
     company_id: str
     status: str
     approved_at: datetime
+    approved_by: str | None = None
+    approval_id: str | None = None
 
 
 class OutboundQuality(BaseModel):
@@ -30,11 +32,12 @@ class OutboundQuality(BaseModel):
 
 
 class OutboundDocument(BaseModel):
+    approval_id: str | None = None
     document_id: str = Field(description="UUID del documento ya aprobado para sync.")
     document_type: str = Field(default="csf", description="Tipo de documento. Para este flujo usa 'csf'.")
-    csf_hash: str | None = Field(default=None, description="Opcional. Se auto-completa desde BD si lo omites.")
-    normalized_payload: dict[str, Any] | None = Field(default=None, description="Opcional. Se auto-completa desde BD si lo omites.")
-    quality: OutboundQuality | None = Field(default=None, description="Opcional. Se auto-completa desde BD si lo omites.")
+    csf_hash: str | None = Field(default=None, description="Opcional. Se toma del snapshot aprobado; un valor distinto se rechaza.")
+    normalized_payload: dict[str, Any] | None = Field(default=None, description="Opcional. Se toma del snapshot aprobado; un valor distinto se rechaza.")
+    quality: OutboundQuality | None = Field(default=None, description="Opcional. Se toma del snapshot aprobado; un valor distinto se rechaza.")
 
 
 class OutboundSyncRequest(BaseModel):
@@ -57,9 +60,11 @@ class OutboundSyncRequest(BaseModel):
 
 
 class OutboundSyncResponse(BaseModel):
+    idempotency_key: str | None = None
     accepted: bool
     event_id: str
     delivery_status: str
+    delivery_mode: str | None = None
 
 
 class OutboundSyncStatusResponse(BaseModel):
@@ -67,6 +72,7 @@ class OutboundSyncStatusResponse(BaseModel):
     company_id: str
     document_id: str
     delivery_status: str
+    delivery_mode: str | None = None
     payload_preview: dict[str, Any] | None = None
     attempts: int
     last_error: str | None = None

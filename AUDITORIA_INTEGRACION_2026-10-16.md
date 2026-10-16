@@ -1,5 +1,11 @@
 # Digestor Fiscal: evaluación de integración
 
+> Diagnóstico histórico sobre main antes de los ajustes. El PR se amplió después
+> para implementar snapshot/gate, conflictos idempotentes y estados de entrega.
+> La especificación actual propuesta está en CONTRATO_OPERATIVO_V1.md y el plan de
+> transición en INTEGRACION_ROLLOUT.md. Los resultados y defectos descritos abajo
+> corresponden a la base auditada, no todos al código actualizado del PR.
+
 Fecha: 16 de octubre de 2026. Base: `9e251d761a23dccc554c11ba0a22274fd4f8e269` de main.
 
 ## Dictamen

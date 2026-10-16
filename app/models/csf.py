@@ -37,4 +37,9 @@ class CSF(Base):
     corrected_json = Column(JSONB, nullable=True)
     field_validation = Column(JSONB, nullable=True)
 
+    approval_id = Column(String, nullable=True)
+    approved_at = Column(DateTime, nullable=True)
+    approved_by = Column(String, nullable=True)
+    approval_snapshot = Column(JSONB, nullable=True)
+
     eventos = relationship("EventoFacturacion", back_populates="csf")

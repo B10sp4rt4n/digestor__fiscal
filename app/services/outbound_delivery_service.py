@@ -32,14 +32,30 @@ def _deliver_event(db, event: DocumentSyncEvent) -> None:
     event.attempts = (event.attempts or 0) + 1
     event.last_attempt_at = now
 
+    # Historical queued payloads were caller-controlled and have no approval snapshot.
+    try:
+        document = json.loads(payload).get("document", {})
+        has_approval = isinstance(document, dict) and bool(document.get("approval_id"))
+    except (ValueError, AttributeError, TypeError):
+        has_approval = False
+    if not has_approval:
+        event.delivery_status = "blocked_review"
+        event.last_error = "Evento legacy sin snapshot aprobado; requiere revisión y nueva operación."
+        event.next_retry_at = None
+        db.commit()
+        return
+
     if not settings.SYNC_OUTBOUND_WEBHOOK_URL:
         if settings.SYNC_OUTBOUND_ALLOW_NOOP_TARGET:
-            event.delivery_status = "delivered"
-            event.delivered_at = now
+            event.delivery_mode = "noop"
+            event.delivery_status = "simulated"
+            event.delivered_at = None
+            event.next_retry_at = None
             event.last_error = None
             db.commit()
             return
 
+        event.delivery_mode = "unconfigured"
         error_msg = "SYNC_OUTBOUND_WEBHOOK_URL no configurado"
         if event.attempts >= settings.SYNC_OUTBOUND_MAX_ATTEMPTS:
             event.delivery_status = "failed_dlq"
@@ -52,10 +68,12 @@ def _deliver_event(db, event: DocumentSyncEvent) -> None:
         db.commit()
         return
 
+    event.delivery_mode = "http"
     headers = {
         "Content-Type": "application/json",
         "X-Signature": _sign_payload(payload),
         "X-Event-Id": event.event_id,
+        "Idempotency-Key": event.idempotency_key,
     }
 
     try:
@@ -64,8 +82,9 @@ def _deliver_event(db, event: DocumentSyncEvent) -> None:
             data=payload,
             headers=headers,
             timeout=15,
+            allow_redirects=False,
         )
-        if response.status_code < 300:
+        if 200 <= response.status_code < 300:
             event.delivery_status = "delivered"
             event.delivered_at = now
             event.last_error = None
@@ -117,6 +136,7 @@ def process_outbound_batch(limit: int = 25) -> int:
                     "event_id": event.event_id,
                     "previous_status": prev_status,
                     "new_status": event.delivery_status,
+                    "delivery_mode": event.delivery_mode,
                     "attempts": event.attempts,
                     "next_retry_at": event.next_retry_at.isoformat() if event.next_retry_at else None,
                 },

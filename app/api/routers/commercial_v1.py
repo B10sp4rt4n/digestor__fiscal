@@ -861,7 +861,7 @@ def update_billing_draft(
     # El bloqueo de fila serializa la edición contra la reserva atomica
     # del timbrado. Sin él, PATCH podria pisar datos del CFDI en vuelo.
     draft = (
-        _draft_query(db)
+        db.query(BillingDraft)
         .filter(BillingDraft.id == draft_id, BillingDraft.company_id == cid)
         .with_for_update()
         .first()

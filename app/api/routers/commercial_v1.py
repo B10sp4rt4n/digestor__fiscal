@@ -817,6 +817,34 @@ def get_billing_draft(
     return _serialize_draft(draft)
 
 
+@router.get(
+    "/v1/billing/drafts/{draft_id}/stamp-result",
+    summary="Consultar resultado de timbrado sin solicitar otro timbre",
+)
+def get_billing_draft_stamp_result(
+    draft_id: str,
+    company_id: str | None = Query(default=None),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
+    db: Session = Depends(get_db),
+):
+    cid = enforce_tenant_scope(ctx, company_id)
+    draft = _get_draft_or_404(db, cid, draft_id)
+    xml_base64 = draft.stamped_xml_base64 if draft.stamp_status == "stamped" else None
+    uuid_value = None
+    if xml_base64:
+        try:
+            xml = base64.b64decode(xml_base64).decode("utf-8")
+            found = re.search(r'UUID="([^"]+)"', xml)
+            uuid_value = found.group(1) if found else None
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return {
+        "stamp_status": draft.stamp_status,
+        "uuid": uuid_value,
+        "xml_base64": xml_base64,
+    }
+
+
 @router.patch(
     "/v1/billing/drafts/{draft_id}",
     response_model=BillingDraftResponse,
@@ -831,6 +859,8 @@ def update_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
+    if draft.stamp_status in ("processing", "unknown", "stamped") or draft.stamped_at is not None:
+        raise HTTPException(status_code=409, detail="No se puede modificar una prefactura timbrada o con timbrado pendiente de conciliacion.")
 
     updates = body.model_dump(exclude_unset=True, exclude={"items"})
     for field_name, value in updates.items():
@@ -1050,6 +1080,35 @@ def stamp_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
+    if draft.status == "stamped" or draft.stamp_status == "stamped" or draft.stamped_at:
+        raise HTTPException(status_code=409, detail="Esta prefactura ya fue timbrada.")
+    if draft.stamp_status in ("processing", "unknown"):
+        raise HTTPException(
+            status_code=409,
+            detail="El timbrado está en proceso o su resultado es incierto. Conciliar con el PAC antes de reintentar.",
+        )
+    if _missing_fields(draft):
+        raise HTTPException(status_code=422, detail="La prefactura tiene datos pendientes y no puede timbrarse.")
+
+    # Reserva atomica y persistente ANTES de llamar al PAC. No se mantiene
+    # una transaccion abierta durante el request de red. Ante incertidumbre,
+    # el estado permanece bloqueado: jamas reintentar a ciegas.
+    claimed = (
+        db.query(BillingDraft)
+        .filter(
+            BillingDraft.id == draft_id,
+            BillingDraft.company_id == cid,
+            BillingDraft.stamp_status.in_(("not_sent", "rejected")),
+            BillingDraft.stamped_at.is_(None),
+            BillingDraft.status != "stamped",
+        )
+        .update({BillingDraft.stamp_status: "processing"}, synchronize_session=False)
+    )
+    if claimed != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Otra solicitud ya reservó o emitió esta factura.")
+    db.commit()
+    draft = _get_draft_or_404(db, cid, draft_id)
 
     xml = _build_cfdi_xml(draft)
     xml_base64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
@@ -1058,22 +1117,39 @@ def stamp_billing_draft(
     try:
         result = timbracfdi_client.timbra_cfdi(xml_base64=xml_base64, id_comprobante=support_id)
     except TimbraCFDIConfigurationError as exc:
+        # Error comprobado ANTES del envio: es seguro liberar la reserva.
+        draft.stamp_status = "not_sent"
+        db.commit()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"No fue posible timbrar la prefactura: {exc}") from exc
+        # Un timeout o error HTTP no prueba que el PAC NO haya timbrado.
+        draft.stamp_status = "unknown"
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo confirmar el resultado del PAC. No vuelvas a timbrar; requiere conciliacion.",
+        ) from exc
 
     stamp_info = timbracfdi_client.extract_stamped_document(result)
-    stamped_xml_base64 = (
-        base64.b64encode(stamp_info["stamped_xml"].encode("utf-8")).decode("ascii")
-        if stamp_info["stamped_xml"]
-        else xml_base64
-    )
+    stamped_xml = stamp_info["stamped_xml"]
+    uuid_match = re.search(r'UUID="([^"]+)"', stamped_xml) if stamped_xml else None
+    has_valid_timbre = bool(stamped_xml and "TimbreFiscalDigital" in stamped_xml and uuid_match)
 
-    draft.stamped_xml_base64 = stamped_xml_base64
     draft.stamped_response_json = json.dumps(result.get("provider_response"), ensure_ascii=False)
-    draft.stamp_status = "stamped" if stamp_info["success"] else "rejected"
+
+    if stamp_info["success"] and not has_valid_timbre:
+        # Un OK sin XML firmado es un resultado incierto, no guardar
+        # el XML original como si fuera un CFDI valido ni emitir otro timbre.
+        draft.stamp_status = "unknown"
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail="El PAC reportó éxito sin XML timbrado verificable. Requiere conciliacion antes de reintentar.",
+        )
 
     if stamp_info["success"]:
+        draft.stamped_xml_base64 = base64.b64encode(stamped_xml.encode("utf-8")).decode("ascii")
+        draft.stamp_status = "stamped"
         draft.stamped_at = datetime.utcnow()
         draft.status = "stamped"
         db.add(
@@ -1087,14 +1163,16 @@ def stamp_billing_draft(
                 evt_hash=f"draft-stamped:{draft.id}:{uuid.uuid4()}",
             )
         )
+    else:
+        # Rechazo explicito del PAC: el operador puede corregir y reenviar.
+        draft.stamp_status = "rejected"
 
     db.commit()
     draft = _get_draft_or_404(db, cid, draft.id)
-
     return BillingDraftStampResponse(
         draft=_serialize_draft(draft),
-        ok=stamp_info["success"],
+        ok=bool(stamp_info["success"]),
         remote_status_code=int(result.get("status_code", 0)),
         provider_response=result.get("provider_response"),
-        xml_base64=stamped_xml_base64,
+        xml_base64=draft.stamped_xml_base64 or "",
     )

@@ -160,7 +160,7 @@ def _serialize_draft(draft: BillingDraft) -> BillingDraftResponse:
         subtotal=_money(draft.subtotal),
         taxes=_money(draft.taxes),
         total=_money(draft.total),
-        ready_to_stamp=len(missing_fields) == 0 and draft.status != "stamped",
+        ready_to_stamp=len(missing_fields) == 0 and draft.status != "stamped" and draft.stamp_status in ("not_sent", "rejected"),
         missing_fields=missing_fields,
         items=[_serialize_item(item) for item in draft.items],
         stamped_at=draft.stamped_at,
@@ -836,7 +836,7 @@ def get_billing_draft_stamp_result(
             xml = base64.b64decode(xml_base64).decode("utf-8")
             found = re.search(r'UUID="([^"]+)"', xml)
             uuid_value = found.group(1) if found else None
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, base64.binascii.Error):
             pass
     return {
         "stamp_status": draft.stamp_status,
@@ -1110,8 +1110,14 @@ def stamp_billing_draft(
     db.commit()
     draft = _get_draft_or_404(db, cid, draft_id)
 
-    xml = _build_cfdi_xml(draft)
-    xml_base64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
+    try:
+        xml = _build_cfdi_xml(draft)
+        xml_base64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
+    except Exception as exc:
+        # Fallo local antes de llamar al PAC: seguro liberar la reserva.
+        draft.stamp_status = "not_sent"
+        db.commit()
+        raise HTTPException(status_code=422, detail="No se pudo generar el XML para timbrado.") from exc
     support_id = body.id_comprobante or f"draft-{draft.id}"
 
     try:

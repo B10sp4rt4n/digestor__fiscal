@@ -858,7 +858,16 @@ def update_billing_draft(
     db: Session = Depends(get_db),
 ):
     cid = enforce_tenant_scope(ctx, company_id)
-    draft = _get_draft_or_404(db, cid, draft_id)
+    # El bloqueo de fila serializa la edición contra la reserva atomica
+    # del timbrado. Sin él, PATCH podria pisar datos del CFDI en vuelo.
+    draft = (
+        _draft_query(db)
+        .filter(BillingDraft.id == draft_id, BillingDraft.company_id == cid)
+        .with_for_update()
+        .first()
+    )
+    if not draft:
+        raise HTTPException(status_code=404, detail="Prefactura no encontrada para este tenant.")
     if draft.stamp_status in ("processing", "unknown", "stamped") or draft.stamped_at is not None:
         raise HTTPException(status_code=409, detail="No se puede modificar una prefactura timbrada o con timbrado pendiente de conciliacion.")
 

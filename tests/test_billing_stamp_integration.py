@@ -43,7 +43,7 @@ def block_network(monkeypatch):
 def seed(db, **overrides):
     draft = BillingDraft(
         id="synthetic-draft", company_id=CTX.tenant_id, status="ready_to_stamp",
-        customer_name="SYNTHETIC CUSTOMER", customer_rfc="XAXX010101000",
+        customer_name="SYNTHETIC CUSTOMER", customer_rfc="AAA010101AAA",
         customer_zip="01000", customer_regimen="616", customer_use_cfdi="S01",
         emitter_rfc="EKU9003173C9", emitter_name="SYNTHETIC EMITTER", emitter_regimen="601",
         place_of_issue="01000", subtotal=100, taxes=16, total=116,

@@ -36,7 +36,7 @@ jobs:
           --health-retries 10
     env:
       # Application imports use SQLite; only explicit guarded tests use PG.
-      DATABASE_URL: sqlite:///:memory:
+      DATABASE_URL: "sqlite:///:memory:"
       DB_SSL_REQUIRE: "false"
       AUTH_CONNECTOR: jwt
       BILLING_TEST_DATABASE_URL: postgresql+psycopg://fiscal_ci:synthetic-ci-only@127.0.0.1:55433/digestor_fiscal_test

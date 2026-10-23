@@ -21,6 +21,7 @@ def fake_draft(status="ready_to_stamp", stamp_status="not_sent", stamped_at=None
         status=status,
         stamp_status=stamp_status,
         stamped_at=stamped_at,
+        stamped_xml_base64=None,
     )
 
 

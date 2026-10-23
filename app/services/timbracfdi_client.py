@@ -5,6 +5,7 @@ import re as _re
 from datetime import datetime, timedelta, timezone
 from textwrap import dedent
 from typing import Any
+from xml.etree import ElementTree
 
 import requests
 
@@ -157,7 +158,10 @@ def _normalize_soap_response(response: requests.Response) -> dict[str, Any]:
         if len(values) > 3:
             provider["Detalle"] = values[3]
 
-    return {"ok": is_ok, "status_code": 200 if is_ok else 400, "provider_response": provider}
+    # Preserve transport failures: a SOAP body does not make an HTTP 5xx
+    # proof that the PAC rejected (or did not receive) the invoice.
+    status = response.status_code if response.status_code >= 400 else (200 if is_ok else 400)
+    return {"ok": is_ok and response.ok, "status_code": status, "provider_response": provider}
 
 
 def _soap_request(operation: str, params: dict[str, str]) -> dict[str, Any]:
@@ -239,6 +243,54 @@ def registra_emisor(
     return _normalize_response(response)
 
 
+def extract_stamp_uuid(xml: str | None) -> str | None:
+    """Read a structural CFDI/TFD UUID; does not verify seals or SAT status."""
+    if not isinstance(xml, str) or "<!DOCTYPE" in xml.upper():
+        return None
+    try:
+        root = ElementTree.fromstring(xml)
+    except (ElementTree.ParseError, ValueError):
+        return None
+    if root.tag != "{http://www.sat.gob.mx/cfd/4}Comprobante":
+        return None
+    stamps = root.findall(
+        "{http://www.sat.gob.mx/cfd/4}Complemento/"
+        "{http://www.sat.gob.mx/TimbreFiscalDigital}TimbreFiscalDigital"
+    )
+    if len(stamps) != 1:
+        return None
+    value = stamps[0].get("UUID", "")
+    return value if _re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", value) else None
+
+
+def _response_status(result: dict[str, Any]) -> int:
+    try:
+        return int(result.get("status_code", 0))
+    except (ValueError, TypeError):
+        return 0
+
+
+def is_explicit_stamp_rejection(result: dict[str, Any]) -> bool:
+    """Only a recognized PAC validation response can release a reservation."""
+    status = _response_status(result)
+    if not 200 <= status < 500 or status in (408, 425, 429):
+        return False
+    provider = result.get("provider_response")
+    if not isinstance(provider, dict) or provider.get("Xml") or provider.get("xml"):
+        return False
+    code = provider.get("Codigo")
+    if isinstance(code, (int, str)) and not isinstance(code, bool):
+        if _re.fullmatch(r"[1-9][0-9]*", str(code)):
+            return True
+    sat_code = provider.get("CodigoSat")
+    return bool(
+        isinstance(sat_code, str)
+        and _re.fullmatch(r"(?:CFDI|CRP|CP|NOM|[0-9])[A-Z0-9]+", sat_code)
+        and provider.get("Categoria")
+        and provider.get("Mensaje")
+    )
+
+
 def extract_stamped_document(result: dict[str, Any]) -> dict[str, Any]:
     """Extrae el CFDI ya timbrado desde la respuesta cruda del PAC.
 
@@ -252,13 +304,14 @@ def extract_stamped_document(result: dict[str, Any]) -> dict[str, Any]:
     codigo: Any = None
 
     if isinstance(provider_response, dict):
-        stamped_xml = provider_response.get("Xml") or provider_response.get("xml") or None
+        candidate = provider_response.get("Xml") or provider_response.get("xml")
+        stamped_xml = candidate if isinstance(candidate, str) else None
         codigo = provider_response.get("Codigo")
         valores = provider_response.get("Valores") or {}
         if isinstance(valores, dict):
             uuid_value = valores.get("UUID") or valores.get("uuid")
 
-    success = bool(result.get("ok")) and (codigo is None or codigo == 0)
+    success = bool(result.get("ok")) and 200 <= _response_status(result) < 300 and codigo in (None, 0, "0")
     return {
         "success": success,
         "stamped_xml": stamped_xml,

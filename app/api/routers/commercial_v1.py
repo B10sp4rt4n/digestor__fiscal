@@ -834,8 +834,7 @@ def get_billing_draft_stamp_result(
     if xml_base64:
         try:
             xml = base64.b64decode(xml_base64).decode("utf-8")
-            found = re.search(r'UUID="([^"]+)"', xml)
-            uuid_value = found.group(1) if found else None
+            uuid_value = timbracfdi_client.extract_stamp_uuid(xml)
         except (ValueError, UnicodeDecodeError, base64.binascii.Error):
             pass
     return {
@@ -868,7 +867,9 @@ def update_billing_draft(
     )
     if not draft:
         raise HTTPException(status_code=404, detail="Prefactura no encontrada para este tenant.")
-    if draft.stamp_status in ("processing", "unknown", "stamped") or draft.stamped_at is not None:
+    if (draft.stamp_status in ("processing", "unknown", "stamped")
+            or draft.status == "stamped" or draft.stamped_at is not None
+            or draft.stamped_xml_base64 is not None):
         raise HTTPException(status_code=409, detail="No se puede modificar una prefactura timbrada o con timbrado pendiente de conciliacion.")
 
     updates = body.model_dump(exclude_unset=True, exclude={"items"})
@@ -1089,7 +1090,8 @@ def stamp_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
-    if draft.status == "stamped" or draft.stamp_status == "stamped" or draft.stamped_at:
+    if (draft.status == "stamped" or draft.stamp_status == "stamped"
+            or draft.stamped_at is not None or draft.stamped_xml_base64 is not None):
         raise HTTPException(status_code=409, detail="Esta prefactura ya fue timbrada.")
     if draft.stamp_status in ("processing", "unknown"):
         raise HTTPException(
@@ -1109,6 +1111,7 @@ def stamp_billing_draft(
             BillingDraft.company_id == cid,
             BillingDraft.stamp_status.in_(("not_sent", "rejected")),
             BillingDraft.stamped_at.is_(None),
+            BillingDraft.stamped_xml_base64.is_(None),
             BillingDraft.status != "stamped",
         )
         .update({BillingDraft.stamp_status: "processing"}, synchronize_session=False)
@@ -1147,19 +1150,19 @@ def stamp_billing_draft(
 
     stamp_info = timbracfdi_client.extract_stamped_document(result)
     stamped_xml = stamp_info["stamped_xml"]
-    uuid_match = re.search(r'UUID="([^"]+)"', stamped_xml) if stamped_xml else None
-    has_valid_timbre = bool(stamped_xml and "TimbreFiscalDigital" in stamped_xml and uuid_match)
+    has_valid_timbre = timbracfdi_client.extract_stamp_uuid(stamped_xml) is not None
 
     draft.stamped_response_json = json.dumps(result.get("provider_response"), ensure_ascii=False)
 
-    if stamp_info["success"] and not has_valid_timbre:
+    if ((stamp_info["success"] and not has_valid_timbre)
+            or (not stamp_info["success"] and not timbracfdi_client.is_explicit_stamp_rejection(result))):
         # Un OK sin XML firmado es un resultado incierto, no guardar
         # el XML original como si fuera un CFDI valido ni emitir otro timbre.
         draft.stamp_status = "unknown"
         db.commit()
         raise HTTPException(
             status_code=502,
-            detail="El PAC reportó éxito sin XML timbrado verificable. Requiere conciliacion antes de reintentar.",
+            detail="La respuesta del PAC no confirma un timbre ni un rechazo explícito. Requiere conciliacion antes de reintentar.",
         )
 
     if stamp_info["success"]:

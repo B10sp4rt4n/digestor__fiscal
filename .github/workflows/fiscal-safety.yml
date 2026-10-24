@@ -7,6 +7,7 @@ on:
       - app/**
       - tests/**
       - requirements.fiscal-test.txt
+      - requirements.txt
       - .github/workflows/fiscal-safety.yml
   workflow_dispatch:
 
@@ -44,13 +45,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Install minimal fiscal test dependencies (runner Python 3.12)
+      - name: Install fiscal and maintenance test dependencies (runner Python 3.12)
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install -r requirements.fiscal-test.txt
-      - name: Unit, offline SOAP, real handlers and two-connection concurrency
-        run: >-
-          .venv/bin/python -m pytest -q
-          tests/test_billing_stamp_guards.py
-          tests/test_billing_stamp_integration.py
-          tests/test_timbracfdi_response_safety.py
+          .venv/bin/pip install --index-url https://pypi.org/simple --only-binary=:all: -r requirements.txt -r requirements.fiscal-test.txt
+      - name: Full offline suite, maintenance and two-connection concurrency
+        run: .venv/bin/python -m pytest -q tests

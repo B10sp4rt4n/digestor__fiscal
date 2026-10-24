@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Explicit maintenance deployment: deny writes and suppress startup writers.
+    FISCAL_MAINTENANCE_MODE: bool = False
     DB_URL: str = "sqlite:///./local.db"
     DATABASE_URL: Optional[str] = None
     USE_SQLITE: bool = False
@@ -150,3 +152,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

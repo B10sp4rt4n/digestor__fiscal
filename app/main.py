@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.core.maintenance import FiscalMaintenanceMiddleware, validate_maintenance_auth
 from app.db.base import Base
 from app.db.session import engine
 
@@ -28,6 +29,11 @@ from app.api.routers import receptor_validate
 from app.services import telemetry
 from app.services.document_queue import document_queue
 from app.services.outbound_delivery_service import outbound_delivery_worker
+
+# Capture once: middleware and lifespan must never disagree during this process.
+FISCAL_MAINTENANCE = settings.FISCAL_MAINTENANCE_MODE
+if FISCAL_MAINTENANCE:
+    validate_maintenance_auth(settings.AUTH_CONNECTOR, settings.AUTH_ALLOW_ANONYMOUS)
 
 
 async def _autopoll_loop():
@@ -62,6 +68,10 @@ def _seed_initial_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if FISCAL_MAINTENANCE:
+        # No create_all, seed, background task or worker shutdown side effects.
+        yield
+        return
     # Crear tablas en modo dev (SQLite). En producción usar Alembic.
     Base.metadata.create_all(bind=engine)
 
@@ -94,6 +104,7 @@ app = FastAPI(
     version=settings.SERVICE_VERSION,
     lifespan=lifespan,
 )
+app.add_middleware(FiscalMaintenanceMiddleware, enabled=FISCAL_MAINTENANCE)
 
 app.include_router(auth_router.router)
 app.include_router(developer_portal.router)
@@ -110,3 +121,4 @@ app.include_router(sync.router)
 app.include_router(sync_v1.router)
 app.include_router(telemetry_router.router)
 app.include_router(receptor_validate.router)
+

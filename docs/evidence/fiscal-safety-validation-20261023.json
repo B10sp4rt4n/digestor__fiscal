@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-10-23T16:00:23.701648+00:00",
+  "status": "isolated_code_and_contract_validated_not_released",
+  "repository": "B10sp4rt4n/digestor__fiscal",
+  "pr": 2,
+  "base_reviewed_sha": "a6cc68f9526570171bc6c8ea1a5774f9d4335d4d",
+  "candidate_sha": "074523e5d6647f8b4b92d34a590b13525d966d91",
+  "candidate_tree": "52cabb5f0bb1b1503cec5eafecfb59a89df82d84",
+  "local": {
+    "passed": 29,
+    "skipped_postgresql": 3,
+    "database": "in-memory SQLite, synthetic rows",
+    "pac": "mocked; requests network blocked",
+    "pytest_output_sha256": "a184f7d0d06da9491a9d7a7d8d5333bbac5c75cda8729722d2eb959f0917c3fe"
+  },
+  "regression_before_fix": {
+    "passed": 11,
+    "failed": 8,
+    "total": 19,
+    "database": "SQLite synthetic; no provider network"
+  },
+  "cotiza_contract_checks": {
+    "passed": 25,
+    "files": 3,
+    "tree": "047a07c306fcd7fde3d8b453432769b630122ca3",
+    "real_provider_flow": false
+  },
+  "ci": {
+    "run_id": 39982889270,
+    "url": "https://github.com/B10sp4rt4n/digestor__fiscal/actions/runs/39982889270",
+    "status": "completed",
+    "conclusion": "success",
+    "job_id": 120514488523,
+    "head_sha": "074523e5d6647f8b4b92d34a590b13525d966d91",
+    "passed": 32,
+    "skipped": 0,
+    "warnings": 98,
+    "postgresql": "17.11, disposable GitHub Actions service, synthetic data",
+    "two_connection_cases": 3
+  },
+  "attempts": [
+    {
+      "run_id": 39982641030,
+      "outcome": "invalid YAML literal SQLite URL; no jobs; corrected quoting"
+    },
+    {
+      "run_id": 39982718781,
+      "outcome": "31 passed, one fixture expectation failed because generic RFC normalizes customer name; synthetic RFC corrected; app normalization preserved"
+    }
+  ],
+  "production_observation": {
+    "platform": "Railway",
+    "project_id": "911f84ed-a4df-40ec-a122-f77d26da261c",
+    "service_id": "ef6c5593-5099-48e0-9da5-b78bcd66a845",
+    "environment_id": "f8cd837c-8769-46c8-9f1f-c84fbbdc7cdc",
+    "configured_source_branch": "main",
+    "observed_deployment_id": "fced17d8-aa0b-4ca1-a1c5-692c138de8e5",
+    "observed_status": "SUCCESS",
+    "staged_changes": false,
+    "variables_read": false,
+    "mutated": false
+  },
+  "limits": [
+    "Synthetic SOAP fixtures only; no real prior PAC response certified",
+    "Structural CFDI/TFD/UUID checks do not verify seals, SAT status or commercial truth",
+    "GET only reads persisted evidence; no automatic remote recovery or release of unknown",
+    "No production deploy, DB writes, migrations, stamps, mail, invitations or new resources",
+    "Digestor must be released before Cotiza CRM, after review and operational gates"
+  ]
+}

@@ -72,6 +72,10 @@ async def lifespan(app: FastAPI):
         # No create_all, seed, background task or worker shutdown side effects.
         yield
         return
+    if engine.dialect.name != "sqlite":
+        from sqlalchemy import inspect
+        if not inspect(engine).has_table("billing_fiscal_acts"):
+            raise RuntimeError("Apply reviewed fiscal-act migration before leaving maintenance")
     # Crear tablas en modo dev (SQLite). En producción usar Alembic.
     Base.metadata.create_all(bind=engine)
 

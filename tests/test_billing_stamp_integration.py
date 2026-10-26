@@ -13,6 +13,7 @@ from app.api.routers import commercial_v1 as api
 from app.core.auth import SecurityContext
 from app.db.base import Base
 from app.models.commercial import BillingDraft, BillingDraftItem, ProductCatalog
+from app.models.fiscal_act import FiscalAct
 from app.models.csf import CSF  # register related mappers, not created in SQLite
 from app.models.sucursal import Sucursal
 from app.models.usuario import Usuario
@@ -25,7 +26,7 @@ CTX = SecurityContext(tenant_id="synthetic-a", user_id="test-operator", role="op
 @pytest.fixture
 def db(monkeypatch):
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    tables = [ProductCatalog.__table__, BillingDraft.__table__, BillingDraftItem.__table__, EventoFacturacion.__table__]
+    tables = [ProductCatalog.__table__, BillingDraft.__table__, BillingDraftItem.__table__, EventoFacturacion.__table__, FiscalAct.__table__]
     Base.metadata.create_all(engine, tables=tables)
     with sessionmaker(bind=engine)() as session:
         yield session
@@ -159,6 +160,107 @@ def test_cross_tenant_result_is_not_found(db):
         result(db, SecurityContext(tenant_id="synthetic-b", user_id="other", role="operator"))
     assert exc.value.status_code == 404
 
+
+def test_fiscal_act_chain_binds_request_and_result_in_same_transactions(db, monkeypatch):
+    import json
+    from app.services import fiscal_acts
+    seed(db)
+    monkeypatch.setattr(api.timbracfdi_client, "timbra_cfdi", Mock(return_value={
+        "ok": True, "status_code": 200, "provider_response": {"Codigo": 0, "Xml": STAMPED_XML}}))
+    stamp(db)
+    rows = db.query(FiscalAct).order_by(FiscalAct.sequence).all()
+    payloads = [json.loads(row.payload) for row in rows]
+    assert [p["action_or_state"] for p in payloads] == ["fiscal.stamp_reserved", "fiscal.request_prepared", "fiscal.stamp_confirmed"]
+    assert payloads[-1]["evidence_refs"]["result_xml_sha256"] == fiscal_acts.digest(STAMPED_XML)
+    assert payloads[-1]["evidence_refs"]["request_xml_sha256"] == payloads[1]["evidence_refs"]["request_xml_sha256"]
+    assert all(p["tenant_id"] == CTX.tenant_id and p["actors"][0]["actor_id"] == CTX.user_id for p in payloads)
+    assert all(p["memory"]["status"] == "local_only" for p in payloads)
+    fiscal_acts.verify(rows)
+    with pytest.raises(HTTPException): stamp(db)
+    assert db.query(FiscalAct).count() == 3
+
+
+def test_rejection_correction_and_new_attempt_extend_history_without_rewriting(db, monkeypatch):
+    import json
+    from app.services import fiscal_acts
+    seed(db)
+    pac = Mock(side_effect=[
+        {"ok": True, "status_code": 200, "provider_response": {"Codigo": 301, "Mensaje": "Synthetic rejection"}},
+        {"ok": True, "status_code": 200, "provider_response": {"Codigo": 0, "Xml": STAMPED_XML}},
+    ])
+    monkeypatch.setattr(api.timbracfdi_client, "timbra_cfdi", pac)
+    assert stamp(db).ok is False
+    original = [(row.id, row.payload, row.content_hash) for row in db.query(FiscalAct).order_by(FiscalAct.sequence)]
+    api.update_billing_draft("synthetic-draft", api.BillingDraftUpdateRequest(customer_name="CORRECTED CUSTOMER"), None, CTX, db)
+    assert stamp(db).ok is True
+    rows = db.query(FiscalAct).order_by(FiscalAct.sequence).all()
+    assert [(row.id, row.payload, row.content_hash) for row in rows[:3]] == original
+    assert json.loads(rows[3].payload)["action_or_state"] == "fiscal.draft_edited"
+    assert len(rows) == 7
+    fiscal_acts.verify(rows)
+
+
+def test_failed_audit_before_provider_rolls_back_reservation(db, monkeypatch):
+    seed(db)
+    pac = Mock()
+    monkeypatch.setattr(api.timbracfdi_client, "timbra_cfdi", pac)
+    monkeypatch.setattr(api.fiscal_acts, "append", Mock(side_effect=ValueError("audit unavailable")))
+    with pytest.raises(ValueError): stamp(db)
+    db.rollback()
+    assert api._get_draft_or_404(db, CTX.tenant_id, "synthetic-draft").stamp_status == "not_sent"
+    pac.assert_not_called()
+
+
+def test_failed_result_audit_leaves_persisted_reservation_and_prepared_request(db, monkeypatch):
+    from app.services import fiscal_acts
+    original = fiscal_acts.append
+    def fail_result(*args, **kwargs):
+        if args[3] == "stamp_confirmed": raise ValueError("audit persistence failure")
+        return original(*args, **kwargs)
+    seed(db)
+    pac = Mock(return_value={"ok": True, "status_code": 200, "provider_response": {"Codigo": 0, "Xml": STAMPED_XML}})
+    monkeypatch.setattr(api.timbracfdi_client, "timbra_cfdi", pac)
+    monkeypatch.setattr(api.fiscal_acts, "append", fail_result)
+    with pytest.raises(ValueError): stamp(db)
+    db.rollback()
+    assert result(db)["stamp_status"] == "processing"
+    assert db.query(FiscalAct).count() == 2
+    with pytest.raises(HTTPException) as error: stamp(db)
+    assert error.value.status_code == 409
+    assert pac.call_count == 1
+
+
+def test_ledger_refuses_orm_rewrites_and_detects_raw_tampering(db, monkeypatch):
+    from sqlalchemy import text
+    from app.services import fiscal_acts
+    seed(db)
+    monkeypatch.setattr(api.timbracfdi_client, "timbra_cfdi", Mock(return_value={
+        "ok": True, "status_code": 200, "provider_response": {"Codigo": 301, "Mensaje": "Synthetic rejection"}}))
+    stamp(db)
+    row = db.query(FiscalAct).order_by(FiscalAct.sequence).first()
+    row.payload = "{}"
+    with pytest.raises(ValueError): db.commit()
+    db.rollback()
+    db.execute(text("UPDATE billing_fiscal_acts SET payload='{}' WHERE sequence=1"))
+    db.commit()
+    db.expire_all()
+    pac = Mock()
+    monkeypatch.setattr(api.timbracfdi_client, "timbra_cfdi", pac)
+    with pytest.raises(ValueError): stamp(db)
+    db.rollback()
+    pac.assert_not_called()
+
+
+def test_draft_creation_records_only_local_observed_history(db):
+    request = api.BillingDraftCreateRequest(customer_name="SYNTHETIC", customer_rfc="AAA010101AAA",
+        customer_zip="01000", customer_regimen="601", customer_use_cfdi="G03",
+        emitter_rfc="EKU9003173C9", emitter_name="SYNTHETIC", emitter_regimen="601", place_of_issue="01000",
+        payment_method="PUE", payment_form="03", items=[api.DraftItemInput(
+            description="Synthetic", quantity=1, unit_price=100, sat_product_code="80101500", unit_code="E48")])
+    created = api.create_billing_draft(request, CTX, db)
+    assert created.ready_to_stamp
+    assert db.query(FiscalAct).filter_by(draft_id=created.id, company_id=CTX.tenant_id).count() == 1
+
 # PostgreSQL concurrency checks opt in only to a named, disposable loopback DB.
 # Never accept DATABASE_URL (the application may use a production URL there).
 @pytest.fixture
@@ -182,7 +284,7 @@ def pg_engine():
     try:
         Base.metadata.create_all(engine, tables=[
             ProductCatalog.__table__, BillingDraft.__table__, BillingDraftItem.__table__,
-            CSF.__table__, Sucursal.__table__, Usuario.__table__, EventoFacturacion.__table__,
+            CSF.__table__, Sucursal.__table__, Usuario.__table__, EventoFacturacion.__table__, FiscalAct.__table__,
         ])
         with sessionmaker(bind=engine)() as db:
             seed(db)
@@ -352,3 +454,43 @@ def test_stamp_result_http_auth_scope_and_contract(db, monkeypatch):
         }
         assert client.post(path).status_code == 405
     pac.assert_not_called()
+
+
+def test_postgres_migration_preserves_draft_and_blocks_rewrites(pg_engine, monkeypatch):
+    import importlib.util
+    from pathlib import Path
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    path = Path(__file__).resolve().parents[1] / 'migrations/versions/20261025_01_fiscal_acts.py'
+    spec = importlib.util.spec_from_file_location('fiscal_migration_pg', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with pg_engine.begin() as conn:
+        # Exercise production DDL, including an existing draft and no ledger yet.
+        conn.execute(text('DROP TABLE billing_fiscal_acts'))
+        module.op = Operations(MigrationContext.configure(conn))
+        module.upgrade()
+        module.upgrade()
+        assert conn.scalar(text('SELECT count(*) FROM billing_draft')) == 1
+        assert conn.scalar(text('SELECT count(*) FROM billing_fiscal_acts')) == 0
+    monkeypatch.setattr(api.timbracfdi_client, 'timbra_cfdi', Mock(return_value={
+        'ok': True, 'status_code': 200, 'provider_response': {'Codigo': 0, 'Xml': STAMPED_XML}}))
+    with sessionmaker(bind=pg_engine)() as db:
+        assert stamp(db).ok
+    for statement in (
+        "UPDATE billing_fiscal_acts SET payload='{}'",
+        'DELETE FROM billing_fiscal_acts',
+        'TRUNCATE billing_fiscal_acts',
+    ):
+        with pytest.raises(DBAPIError, match='append-only'):
+            with pg_engine.begin() as conn:
+                conn.execute(text(statement))
+    with pytest.raises(DBAPIError, match='foreign key'):
+        with pg_engine.begin() as conn:
+            conn.execute(text("""INSERT INTO billing_fiscal_acts
+                (id,company_id,draft_id,sequence,payload,content_hash,recorded_at)
+                VALUES ('invalid','other-tenant','synthetic-draft',1,'{}','fake',CURRENT_TIMESTAMP)"""))
+    with pg_engine.connect() as conn:
+        assert conn.scalar(text('SELECT count(*) FROM billing_fiscal_acts')) == 3

@@ -94,7 +94,7 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
         outbound = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
         ns = {"asynccontextmanager": asynccontextmanager, "FastAPI": object,
               "FISCAL_MAINTENANCE": enabled, "Base": SimpleNamespace(metadata=SimpleNamespace(create_all=create_all)),
-              "engine": object(), "_seed_initial_admin": seed, "document_queue": queue,
+              "engine": SimpleNamespace(dialect=SimpleNamespace(name="sqlite")), "_seed_initial_admin": seed, "document_queue": queue,
               "outbound_delivery_worker": outbound,
               "settings": SimpleNamespace(DOCUMENT_QUEUE_WORKERS=1, SYNC_OUTBOUND_AUTOPOLL=True, ALERTS_AUTOPOLL=False)}
         exec(compile(module, "candidate-lifespan", "exec"), ns)

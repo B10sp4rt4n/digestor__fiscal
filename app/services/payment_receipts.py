@@ -12,6 +12,8 @@ from fastapi import HTTPException
 from app.models.billing_payment import BillingPayment, PaymentReceipt, PaymentAct
 from app.services.fiscal_acts import canonical, digest
 from app.services.fiscal_rules import money
+from app.services.payment_allocation import allocate, VERSION as ALLOCATION_VERSION
+from app.services.rep_validation import validate as validate_rep
 from app.services.timbracfdi_client import extract_stamp_uuid
 
 CFDI = 'http://www.sat.gob.mx/cfd/4'
@@ -19,7 +21,7 @@ PAGOS = 'http://www.sat.gob.mx/Pagos20'
 NS = {'c': CFDI, 'p': PAGOS}
 LOCAL = ZoneInfo('America/Mexico_City')
 SIX = Decimal('0.000001')
-RULE = 'digestor.rep20-national-mxn-iva16/1'
+RULE = 'digestor.rep20-national-mxn-iva16/2'
 
 
 def fail(message, status=422):
@@ -167,15 +169,12 @@ def register(db, draft, body, ctx):
     if len(rows) >= 999: fail('Número de parcialidades fuera del perfil soportado')
     if body.amount > balance: fail('El pago excede el saldo pendiente', 409)
     remaining = balance - body.amount
-    base = (Decimal(snap['base']) * body.amount / Decimal(snap['total'])).quantize(SIX, rounding=ROUND_HALF_UP)
-    tax = (Decimal(snap['tax']) * body.amount / Decimal(snap['total'])).quantize(SIX, rounding=ROUND_HALF_UP)
-    if remaining == 0:
-        base = Decimal(snap['base']) - allocated_base; tax = Decimal(snap['tax']) - allocated_tax
-    # REP arithmetic tolerance and rounding must stay within this narrow profile.
-    if base <= 0 or tax < 0 or abs(base * Decimal('.16') - tax) > Decimal('.000002'):
-        fail('El prorrateo requiere revisión fiscal; no se registró el pago')
+    try:
+        base,tax=allocate(snap,body.amount,balance,allocated_base,allocated_tax)
+    except ValueError as exc:
+        fail(str(exc))
     payment_id = str(uuid.uuid4())
-    normalized.update({'paid_at_original':body.paid_at.isoformat(), 'invoice_snapshot':snap,
+    normalized.update({'allocation_version':ALLOCATION_VERSION, 'paid_at_original':body.paid_at.isoformat(), 'invoice_snapshot':snap,
         'payment_id':payment_id, 'tenant_id':draft.company_id,'draft_id':draft.id,'idempotency_key':str(body.idempotency_key),
         'sequence':len(rows)+1, 'balance_before':f'{balance:.2f}', 'balance_after':f'{remaining:.2f}',
         'tax_base':f'{base:.6f}', 'tax_amount':f'{tax:.6f}'})
@@ -195,6 +194,7 @@ def build_xml(payment, *, now=None):
     data = json.loads(payment.declaration); snap = data['invoice_snapshot']
     if digest(payment.declaration) != payment.declaration_hash: fail('Declaración de pago alterada',409)
     now = now or datetime.now(timezone.utc)
+    tax_text = f'{payment.tax_amount:.2f}' if data.get('allocation_version') == ALLOCATION_VERSION else f'{payment.tax_amount:.6f}'
     root = ET.Element('{'+CFDI+'}Comprobante', {'Version':'4.0','Serie':'RP','Folio':payment.id,
         'Fecha':now.astimezone(LOCAL).strftime('%Y-%m-%dT%H:%M:%S'), 'SubTotal':'0','Moneda':'XXX','Total':'0',
         'TipoDeComprobante':'P','Exportacion':'01','LugarExpedicion':snap['place'],
@@ -213,9 +213,9 @@ def build_xml(payment, *, now=None):
         'NumParcialidad':str(payment.sequence),'ImpSaldoAnt':f'{payment.balance_before:.2f}','ImpPagado':f'{payment.amount:.2f}',
         'ImpSaldoInsoluto':f'{payment.balance_after:.2f}','ObjetoImpDR':'02'})
     dr = ET.SubElement(ET.SubElement(doc,'{'+PAGOS+'}ImpuestosDR'),'{'+PAGOS+'}TrasladosDR')
-    ET.SubElement(dr,'{'+PAGOS+'}TrasladoDR',{'BaseDR':f'{payment.tax_base:.6f}','ImpuestoDR':'002','TipoFactorDR':'Tasa', 'TasaOCuotaDR':'0.160000','ImporteDR':f'{payment.tax_amount:.6f}'})
+    ET.SubElement(dr,'{'+PAGOS+'}TrasladoDR',{'BaseDR':f'{payment.tax_base:.6f}','ImpuestoDR':'002','TipoFactorDR':'Tasa', 'TasaOCuotaDR':'0.160000','ImporteDR':tax_text})
     pr = ET.SubElement(ET.SubElement(pago,'{'+PAGOS+'}ImpuestosP'),'{'+PAGOS+'}TrasladosP')
-    ET.SubElement(pr,'{'+PAGOS+'}TrasladoP',{'BaseP':f'{payment.tax_base:.6f}','ImpuestoP':'002','TipoFactorP':'Tasa', 'TasaOCuotaP':'0.160000','ImporteP':f'{payment.tax_amount:.6f}'})
+    ET.SubElement(pr,'{'+PAGOS+'}TrasladoP',{'BaseP':f'{payment.tax_base:.6f}','ImpuestoP':'002','TipoFactorP':'Tasa', 'TasaOCuotaP':'0.160000','ImporteP':tax_text})
     ET.register_namespace('cfdi',CFDI); ET.register_namespace('pago20',PAGOS); ET.register_namespace('xsi','http://www.w3.org/2001/XMLSchema-instance')
     return ET.tostring(root, encoding='unicode', xml_declaration=True)
 
@@ -232,5 +232,5 @@ def validate_returned_xml(request_xml, stamped_xml):
         for path in ('c:Emisor','c:Receptor','c:Conceptos','c:Complemento/p:Pagos'):
             a,b = expected.find(path,NS),actual.find(path,NS)
             if a is None or b is None or structural(a) != structural(b): return False
-        return actual.tag == expected.tag and extract_stamp_uuid(stamped_xml) is not None
+        return actual.tag == expected.tag and extract_stamp_uuid(stamped_xml) is not None and validate_rep(stamped_xml, signed=True)['valid']
     except (ValueError, TypeError, ET.ParseError): return False

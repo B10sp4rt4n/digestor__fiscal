@@ -9,12 +9,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.core.auth import SecurityContext, role_guard
 from app.core.config import settings
+from app.core.fiscal_sandbox import ppd_transport_is_sandbox
 from app.db.session import get_db
 from app.models.commercial import BillingDraft
 from app.models.billing_payment import BillingPayment, PaymentReceipt
 from app.schemas.billing_payment import RegisterPayment
 from app.services import payment_receipts as service, timbracfdi_client as pac
 from app.services.fiscal_acts import digest
+from app.services.rep_validation import validate as validate_rep
 from app.services.timbracfdi_client import TimbraCFDIConfigurationError
 
 router = APIRouter(prefix='/v1/billing/drafts', tags=['payments-v1'])
@@ -26,7 +28,7 @@ def enabled():
     if not settings.FISCAL_PPD_ENABLED:
         raise HTTPException(status_code=503,detail='PPD y pagos aún no están habilitados')
     # This first implementation may only issue PPD/REP in sandbox.
-    if settings.timbracfdi_environment != 'sandbox':
+    if not ppd_transport_is_sandbox():
         raise HTTPException(status_code=503,detail='PPD está limitado a validación sandbox')
 
 
@@ -101,7 +103,9 @@ def prepare_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(w
     payment,receipt = get_payment(db,draft,payment_id,lock=True)
     # Preview never changes an issued or pending request and never calls PAC.
     xml = receipt.request_xml or service.build_xml(payment)
-    return {'preliminary':True,'xml_base64':base64.b64encode(xml.encode()).decode(), 'request_xml_sha256':digest(xml),
+    validation = validate_rep(xml)
+    if not validation['valid']: raise HTTPException(status_code=422,detail={'message':'XML preliminar no válido para el perfil REP','validation':validation})
+    return {'preliminary':True,'validation':validation,'xml_base64':base64.b64encode(xml.encode()).decode(), 'request_xml_sha256':digest(xml),
         'receipt_status':receipt.status,'bank_verification':'not_performed'}
 
 
@@ -123,6 +127,8 @@ def stamp_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(wri
         if previous_receipt.status != 'stamped':
             raise HTTPException(status_code=409,detail='Primero concilia o timbra el complemento de la parcialidad anterior')
     xml = service.build_xml(payment)
+    validation = validate_rep(xml)
+    if not validation['valid']: raise HTTPException(status_code=422,detail={'message':'XML REP no válido; no se contactó al PAC','validation':validation})
     before = receipt.status
     claimed = db.execute(update(PaymentReceipt).where(PaymentReceipt.payment_id==payment.id,
         PaymentReceipt.company_id==draft.company_id,PaymentReceipt.status.in_(('not_sent','rejected')),
@@ -132,7 +138,7 @@ def stamp_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(wri
         db.rollback(); raise HTTPException(status_code=409,detail='Otra solicitud reservó el complemento')
     db.refresh(receipt)
     service.append_act(db,payment,receipt,ctx,'reserved',before)
-    evidence = {'request_xml_sha256':digest(xml),'invoice_xml_sha256':snap['xml_sha256']}
+    evidence = {'schema_bundle_sha256':validation['schema_bundle_sha256'],'validation_mode':validation['mode'],'request_xml_sha256':digest(xml),'invoice_xml_sha256':snap['xml_sha256']}
     service.append_act(db,payment,receipt,ctx,'prepared','processing',evidence)
     db.commit()  # Reservation/request durable before PAC. No row lock across network.
     try:

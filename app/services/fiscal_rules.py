@@ -2,6 +2,7 @@
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 import re
 from app.core.config import settings
+from app.core.fiscal_sandbox import ppd_transport_is_sandbox
 
 RULE_ID = "digestor.national-income-mxn-pue-ppd-sandbox/2"
 CENT = Decimal("0.01")
@@ -39,7 +40,7 @@ def scenario_issues(draft):
     """
     issues = []
     if draft.currency != "MXN": issues.append("unsupported_currency")
-    ppd = draft.payment_method == "PPD" and settings.FISCAL_PPD_ENABLED and settings.timbracfdi_environment == "sandbox"
+    ppd = draft.payment_method == "PPD" and settings.FISCAL_PPD_ENABLED and ppd_transport_is_sandbox()
     if draft.payment_method != "PUE" and not ppd: issues.append("unsupported_payment_method")
     if ppd:
         if draft.payment_form != "99": issues.append("ppd_requires_payment_form_99")

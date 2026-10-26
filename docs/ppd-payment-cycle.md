@@ -4,7 +4,7 @@
 
 Sobre el núcleo fiscal anterior, esta entrega prepara una factura nacional MXN/IVA16 con método PPD y forma99, declara cobros parciales/totales, calcula saldos y prepara un CFDI P con complemento Pagos2.0. Incorpora reserva de emisión y manejo de resultados inciertos para probar timbrado con proveedor simulado o sandbox configurado. No habilita producción.
 
-FISCAL_PPD_ENABLED=false y FISCAL_REP_STAMP_ENABLED=false son los valores predeterminados. Incluso con flags activos, el servidor exige TIMBRACFDI_ENV=sandbox tanto para el perfil PPD como para el flujo de pagos. PUE conserva su comportamiento. No se enviaron comprobantes ni se accedió a bancos durante el desarrollo.
+FISCAL_PPD_ENABLED=false y FISCAL_REP_STAMP_ENABLED=false son los valores predeterminados. Incluso con flags activos, el servidor exige TIMBRACFDI_ENV=sandbox y destino HTTPS de pruebas reconocido tanto para el perfil PPD como para el flujo de pagos. PUE conserva su comportamiento. No se enviaron comprobantes ni se accedió a bancos durante el desarrollo.
 
 ## Contrato y alcance
 
@@ -14,7 +14,7 @@ FISCAL_PPD_ENABLED=false y FISCAL_REP_STAMP_ENABLED=false son los valores predet
 - POST .../receipt/prepare devuelve XML preliminar, sin persistir una emisión ni llamar al PAC.
 - POST .../receipt/stamp requiere ambos flags y sandbox. Una respuesta emitida debe incluir UUID y conservar los datos de negocio del REP solicitado. Respuestas cambiadas/incompletas y timeouts dejan unknown. No hay reintentos automáticos.
 
-El primer perfil es un pago aplicado a una factura MXN con todas las partidas objeto02/IVA16, sin retenciones, descuentos, relaciones, moneda extranjera ni anticipos. Se rechazan pagos futuros, previos a la factura, fuera de orden cronológico, superiores al saldo y parcialidades más allá de999. No hay conversión de moneda. La distribución proporcional conserva base/impuesto originales y usa seis decimales; si el prorrateo no cabe en el margen aritmético conservador del perfil, se rechaza antes de registrar. Esto incluye ciertas facturas con diferencias de redondeo entre base e IVA: falta ampliar y validar estos casos con la matriz fiscal/PAC.
+El primer perfil es un pago aplicado a una factura MXN con todas las partidas objeto02/IVA16, sin retenciones, descuentos, relaciones, moneda extranjera ni anticipos. Se rechazan pagos futuros, previos a la factura, fuera de orden cronológico, superiores al saldo y parcialidades más allá de999. No hay conversión de moneda. La distribución acumulada conserva base/impuesto originales, base a seis decimales e IVA a centavos. Comprueba los límites oficiales del abono y del remanente liquidable; si no existe una asignación válida, se rechaza antes de registrar. Esto incluye ciertas facturas con diferencias de redondeo entre base e IVA: falta ampliar y validar estos casos con la matriz fiscal/PAC.
 
 El XML propuesto incluye CFDI4.0 tipoP, monedaXXX, total/subtotal0, usoCP01, concepto84111506/ACT/Pago y ObjetoImp01. Pagos2.0 expresa total de pagos, impuestos MXN, fecha/forma/moneda del cobro, UUID original, parcialidad, saldo anterior, pagado e insoluto, y trasladosDR/P. La fecha original con offset se conserva; se normaliza UTC para orden y se representa en America/Mexico_City en el XML.
 
@@ -22,7 +22,7 @@ Referencias oficiales consultadas (diseño, no certificación):
 - Estándar Pagos2.0 del SAT: https://www.sat.gob.mx/cs/Satellite?blobcol=urldata&blobkey=id&blobtable=MungoBlobs&blobwhere=1461175070885&ssbinary=true
 - Esquema referenciado: http://www.sat.gob.mx/sitio_internet/cfd/Pagos/Pagos20.xsd
 
-No se ejecutó validación completa contra el conjunto XSD/catálogos/matriz SAT, ni se obtuvo aceptación real del PAC. El XML preliminar no está sellado ni timbrado. Verificar CSD, firmado/ensobretado y contrato del PAC en sandbox antes de cualquier liberación. La emisión de la factura de ingreso ya usa el adaptador existente; este cambio no cambia el contrato de firmado de ese adaptador.
+Se agregó validación offline con XSD CFDI/Pagos/Timbre y catálogos fijados, más reglas adicionales del perfil. No se cubre toda la matriz SAT ni se obtuvo aceptación real del PAC; ver docs/rep-schema-and-rounding.md. El XML preliminar no está sellado ni timbrado. Verificar CSD, firmado/ensobretado y contrato del PAC en sandbox antes de cualquier liberación. La emisión de la factura de ingreso ya usa el adaptador existente; este cambio no cambia el contrato de firmado de ese adaptador.
 
 ## Integridad y concurrencia
 
@@ -38,7 +38,7 @@ Recibo reservado y solicitud exacta se confirman antes del PAC, sin mantener blo
 
 Revisar/aplicar en mantenimiento, con respaldo/recuperación productivos y exclusividad de escritores del plan anterior. Activar primero sólo en entorno aislado, coordinado con Cotiza (DIGESTOR_FISCAL_PPD_ENABLED=true). Esta entrega permanece en borrador.
 
-Pendientes de liberación: validación completa fiscal/XSD y sandbox real; prorrateos adicionales de redondeo; conciliación externa y recuperación de unknown; correcciones/reversiones de cobros, cancelación/sustitución, PDF propio del REP, pagos agrupados a varias facturas, anticipos, retenciones y otras monedas. No activar productivo antes de cerrar estos puntos aplicables. No se contrataron servicios nuevos ni se usó IA de pago.
+Pendientes de liberación: matriz fiscal/identidad/vigencia y aceptación sandbox real; perfiles de redondeo agregado todavía no representables; conciliación externa y recuperación de unknown; correcciones/reversiones de cobros, cancelación/sustitución, PDF propio del REP, pagos agrupados a varias facturas, anticipos, retenciones y otras monedas. No activar productivo antes de cerrar estos puntos aplicables. No se contrataron servicios nuevos ni se usó IA de pago.
 
 ## Pruebas
 

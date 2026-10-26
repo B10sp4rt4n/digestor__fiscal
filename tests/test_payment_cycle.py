@@ -67,7 +67,10 @@ def stamp(db,payment_id): return api.stamp_receipt('credit-invoice',payment_id,C
 
 def accepted(**kwargs):
     root=ET.fromstring(base64.b64decode(kwargs['xml_base64']))
-    ET.SubElement(root.find('c:Complemento',svc.NS),'{http://www.sat.gob.mx/TimbreFiscalDigital}TimbreFiscalDigital',{'UUID':str(uuid4())})
+    root.set('Sello','c3ludGhldGlj');root.set('NoCertificado','00000000000000000000');root.set('Certificado','c3ludGhldGlj')
+    ET.SubElement(root.find('c:Complemento',svc.NS),'{http://www.sat.gob.mx/TimbreFiscalDigital}TimbreFiscalDigital',{
+        'Version':'1.1','UUID':str(uuid4()),'FechaTimbrado':root.get('Fecha'),'RfcProvCertif':'AAA010101AAA',
+        'SelloCFD':'c3ludGhldGlj','NoCertificadoSAT':'00000000000000000000','SelloSAT':'c3ludGhldGlj'})
     return {'ok':True,'status_code':200,'provider_response':{'Codigo':0,'Xml':ET.tostring(root,encoding='unicode')}}
 
 
@@ -86,7 +89,7 @@ def test_partial_then_final_balance_and_rep_structure(db,monkeypatch):
     doc=root.find('c:Complemento/p:Pagos/p:Pago/p:DoctoRelacionado',svc.NS)
     assert doc.get('NumParcialidad')=='1' and doc.get('ImpSaldoAnt')=='116.00' and doc.get('ImpSaldoInsoluto')=='58.00'
     tax=doc.find('p:ImpuestosDR/p:TrasladosDR/p:TrasladoDR',svc.NS)
-    assert tax.get('BaseDR')=='50.000000' and tax.get('ImporteDR')=='8.000000'
+    assert tax.get('BaseDR')=='50.000000' and tax.get('ImporteDR')=='8.00'
     assert stamp(db,first['id'])['ok'] is True
     second=record(db,body('58.00','bank-002')); assert stamp(db,second['id'])['ok'] is True
     assert api.list_payments('credit-invoice',CTX,db)['balance']=='0.00'

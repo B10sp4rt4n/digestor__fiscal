@@ -1,8 +1,10 @@
 """Deterministic preparation rules. No PAC/catalog lookup or fiscal certification."""
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 import re
+from app.core.config import settings
+from app.core.fiscal_sandbox import ppd_transport_is_sandbox
 
-RULE_ID = "digestor.national-income-mxn-pue/1"
+RULE_ID = "digestor.national-income-mxn-pue-ppd-sandbox/2"
 CENT = Decimal("0.01")
 
 
@@ -38,8 +40,11 @@ def scenario_issues(draft):
     """
     issues = []
     if draft.currency != "MXN": issues.append("unsupported_currency")
-    if draft.payment_method != "PUE": issues.append("unsupported_payment_method")
-    if draft.payment_form not in {"01", "02", "03", "04", "28"}: issues.append("unsupported_payment_form")
+    ppd = draft.payment_method == "PPD" and settings.FISCAL_PPD_ENABLED and ppd_transport_is_sandbox()
+    if draft.payment_method != "PUE" and not ppd: issues.append("unsupported_payment_method")
+    if ppd:
+        if draft.payment_form != "99": issues.append("ppd_requires_payment_form_99")
+    elif draft.payment_form not in {"01", "02", "03", "04", "28"}: issues.append("unsupported_payment_form")
     for prefix in ("customer", "emitter"):
         rfc = str(getattr(draft, prefix + "_rfc", "") or "").strip().upper()
         if not re.fullmatch(r"[A-ZÑ&]{3,4}\d{6}[A-Z0-9]{3}", rfc): issues.append(prefix + "_rfc_syntax")

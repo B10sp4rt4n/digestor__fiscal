@@ -5,6 +5,8 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Explicit maintenance deployment: deny writes and suppress startup writers.
     FISCAL_MAINTENANCE_MODE: bool = False
+    FISCAL_PPD_ENABLED: bool = False
+    FISCAL_REP_STAMP_ENABLED: bool = False
     DB_URL: str = "sqlite:///./local.db"
     DATABASE_URL: Optional[str] = None
     USE_SQLITE: bool = False

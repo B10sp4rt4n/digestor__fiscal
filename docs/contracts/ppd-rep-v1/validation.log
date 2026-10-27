@@ -1,0 +1,67 @@
+COMMAND python3 -I scripts/ppd_rep_contract/test_reference.py
+test_cash_is_not_fiscal_confirmation (__main__.ContractTests.test_cash_is_not_fiscal_confirmation) ... ok
+test_confirmation_replay_does_not_advance_twice (__main__.ContractTests.test_confirmation_replay_does_not_advance_twice) ... ok
+test_correction_is_blocked_after_reservation (__main__.ContractTests.test_correction_is_blocked_after_reservation) ... ok
+test_cross_tenant_invoice_rejected (__main__.ContractTests.test_cross_tenant_invoice_rejected) ... ok
+test_deferred_full_payment_is_partiality_one (__main__.ContractTests.test_deferred_full_payment_is_partiality_one) ... ok
+test_due_date_uses_month_of_receipt (__main__.ContractTests.test_due_date_uses_month_of_receipt) ... ok
+test_excess_receipt_preserved_unallocated (__main__.ContractTests.test_excess_receipt_preserved_unallocated) ... ok
+test_explicit_rejection_preserves_payment_and_partiality (__main__.ContractTests.test_explicit_rejection_preserves_payment_and_partiality) ... ok
+test_external_transaction_duplicate (__main__.ContractTests.test_external_transaction_duplicate) ... ok
+test_history_reorder_detected (__main__.ContractTests.test_history_reorder_detected) ... ok
+test_history_tamper_detected (__main__.ContractTests.test_history_tamper_detected) ... ok
+test_idempotency_content_conflict (__main__.ContractTests.test_idempotency_content_conflict) ... ok
+test_idempotency_replay_has_no_extra_act (__main__.ContractTests.test_idempotency_replay_has_no_extra_act) ... ok
+test_invalid_money_rejected (__main__.ContractTests.test_invalid_money_rejected) ... ok
+test_local_failure_preserves_payment (__main__.ContractTests.test_local_failure_preserves_payment) ... ok
+test_mismatched_confirmation_is_quarantined_without_mutation (__main__.ContractTests.test_mismatched_confirmation_is_quarantined_without_mutation) ... ok
+test_multi_invoice_receiver_mismatch (__main__.ContractTests.test_multi_invoice_receiver_mismatch) ... ok
+test_multi_invoice_same_receiver (__main__.ContractTests.test_multi_invoice_same_receiver) ... ok
+test_new_intent_does_not_duplicate_same_receipt (__main__.ContractTests.test_new_intent_does_not_duplicate_same_receipt) ... ok
+test_out_of_order_rep_is_blocked_even_before_first_reservation (__main__.ContractTests.test_out_of_order_rep_is_blocked_even_before_first_reservation) ... ok
+test_overapplication_preserves_balance (__main__.ContractTests.test_overapplication_preserves_balance) ... ok
+test_processing_crash_blocks_other_intent (__main__.ContractTests.test_processing_crash_blocks_other_intent) ... ok
+test_pue_and_invalid_ppd_do_not_enter_new_profile (__main__.ContractTests.test_pue_and_invalid_ppd_do_not_enter_new_profile) ... ok
+test_reconcile_requires_evidence (__main__.ContractTests.test_reconcile_requires_evidence) ... ok
+test_recording_does_not_change_balance (__main__.ContractTests.test_recording_does_not_change_balance) ... ok
+test_reference_fixtures (__main__.ContractTests.test_reference_fixtures) ... ok
+test_rejected_attempt_explicit_retry_preserves_history (__main__.ContractTests.test_rejected_attempt_explicit_retry_preserves_history) ... ok
+test_rejected_retry_requires_matching_authorization (__main__.ContractTests.test_rejected_retry_requires_matching_authorization) ... ok
+test_reserve_replay_returns_same_request (__main__.ContractTests.test_reserve_replay_returns_same_request) ... ok
+test_same_amount_not_identity (__main__.ContractTests.test_same_amount_not_identity) ... ok
+test_stale_revision_rejects_second_writer (__main__.ContractTests.test_stale_revision_rejects_second_writer) ... ok
+test_two_partial_payments (__main__.ContractTests.test_two_partial_payments) ... ok
+test_unknown_cannot_be_retried_with_new_authorization (__main__.ContractTests.test_unknown_cannot_be_retried_with_new_authorization) ... ok
+test_unknown_is_not_rejection (__main__.ContractTests.test_unknown_is_not_rejection) ... ok
+test_unknown_recovery_requires_fencing_and_evidence (__main__.ContractTests.test_unknown_recovery_requires_fencing_and_evidence) ... ok
+test_unknown_retains_reservation_and_cash (__main__.ContractTests.test_unknown_retains_reservation_and_cash) ... ok
+test_unreconciled_payment_cannot_apply (__main__.ContractTests.test_unreconciled_payment_cannot_apply) ... ok
+
+----------------------------------------------------------------------
+Ran 37 tests in 0.005s
+
+OK
+EXIT 0
+COMMAND python3 scripts/ppd_rep_contract/test_wire.py
+test_balance_injection_rejected (__main__.WireTests.test_balance_injection_rejected) ... ok
+test_browser_tenant_injection_rejected (__main__.WireTests.test_browser_tenant_injection_rejected) ... ok
+test_evidence_required (__main__.WireTests.test_evidence_required) ... ok
+test_float_amount_rejected (__main__.WireTests.test_float_amount_rejected) ... ok
+test_partiality_injection_rejected (__main__.WireTests.test_partiality_injection_rejected) ... ok
+test_payment_form_99_rejected (__main__.WireTests.test_payment_form_99_rejected) ... ok
+test_stamped_requires_document (__main__.WireTests.test_stamped_requires_document) ... ok
+test_stamped_result (__main__.WireTests.test_stamped_result) ... ok
+test_timezone_required (__main__.WireTests.test_timezone_required) ... ok
+test_unknown_not_retryable (__main__.WireTests.test_unknown_not_retryable) ... ok
+test_unknown_result (__main__.WireTests.test_unknown_result) ... ok
+test_usd_rejected (__main__.WireTests.test_usd_rejected) ... ok
+test_valid_request (__main__.WireTests.test_valid_request) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.017s
+
+OK
+EXIT 0
+COMMAND python3 -I scripts/ppd_rep_contract/check_existing_pue_guard.py /workspace/scratch/d17d6efd2b12/digestor__fiscal
+Existing Digestor guard: synthetic PUE accepted; PPD99 still blocked (3 assertions).
+EXIT 0

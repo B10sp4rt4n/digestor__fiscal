@@ -1,0 +1,66 @@
+{
+  "status": "local_hashes_only_no_external_custody",
+  "source_snapshots": [
+    {
+      "repository": "DynamiQuote",
+      "commit": "6a20fd80894fb1f86d364afaf4ab8fe31e81b14c",
+      "path": "cotiza-web/lib/validations/proposal-invoice.ts",
+      "sha256": "52e54df6d601041f324549890ddd3c257a4a5c0501611fce37559ba2750c40c7"
+    },
+    {
+      "repository": "DynamiQuote",
+      "commit": "6a20fd80894fb1f86d364afaf4ab8fe31e81b14c",
+      "path": "cotiza-web/app/api/proposals/[proposalId]/invoice/route.ts",
+      "sha256": "d23205d81ab26248e7855f8236d059e67db99cf90d12558fa72a7215855d6daf"
+    },
+    {
+      "repository": "DynamiQuote",
+      "commit": "6a20fd80894fb1f86d364afaf4ab8fe31e81b14c",
+      "path": "cotiza-web/lib/db/proposal-invoices.ts",
+      "sha256": "ead0cd35784427169d70e57eb143532f7ca1073d2149db8931eb64867ad520a2"
+    },
+    {
+      "repository": "DynamiQuote",
+      "commit": "6a20fd80894fb1f86d364afaf4ab8fe31e81b14c",
+      "path": "cotiza-web/lib/integrations/digestor-fiscal.ts",
+      "sha256": "bf36b3e4deb132dcc41502707cef2f7c6642c9f604af035496497fd345dc9b03"
+    },
+    {
+      "repository": "digestor__fiscal",
+      "commit": "b8fcba8c1192a21ed77110147634f85323f9a2f0",
+      "path": "app/services/fiscal_rules.py",
+      "sha256": "f66e54f925dbe30e416dd9d663e8a1b04b13f727644b6cbd6765117a12850502"
+    },
+    {
+      "repository": "digestor__fiscal",
+      "commit": "b8fcba8c1192a21ed77110147634f85323f9a2f0",
+      "path": "app/services/fiscal_acts.py",
+      "sha256": "d9610f2af7908b0a37997bb455d0c04e07e6f9e45f7fe1b75d02faecb2a74227"
+    },
+    {
+      "repository": "digestor__fiscal",
+      "commit": "b8fcba8c1192a21ed77110147634f85323f9a2f0",
+      "path": "app/models/fiscal_act.py",
+      "sha256": "ccd5cea1bbc40599a96920e09594a8ca82e5ff1b24eef616f518807803297621"
+    },
+    {
+      "repository": "digestor__fiscal",
+      "commit": "b8fcba8c1192a21ed77110147634f85323f9a2f0",
+      "path": "app/models/commercial.py",
+      "sha256": "29696d6b30d5f39352911435a6fbbfa02122484ed4ff467acd6959c4b12cfd52"
+    },
+    {
+      "repository": "digestor__fiscal",
+      "commit": "b8fcba8c1192a21ed77110147634f85323f9a2f0",
+      "path": "app/schemas/commercial.py",
+      "sha256": "e1d5243bf3394fd1291c1726cac2529641516bd521352d56f68bd17d598bb379"
+    },
+    {
+      "repository": "digestor__fiscal",
+      "commit": "b8fcba8c1192a21ed77110147634f85323f9a2f0",
+      "path": "app/api/routers/commercial_v1.py",
+      "sha256": "738024d5dbc56e605c3852772e16e64dedcf79c5dbdda27aae698455345af54e"
+    }
+  ],
+  "assurance": "source identity checked locally; not a SAT signature or fiscal certification"
+}

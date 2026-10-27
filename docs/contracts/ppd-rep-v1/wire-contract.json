@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cotiza:digestor:ppd-rep:1",
+  "title": "Proposed REP intent; not an implemented API",
+  "allOf": [
+    {
+      "$ref": "#/$defs/RepIntent"
+    }
+  ],
+  "$defs": {
+    "MoneyMXN": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]{0,11})\\.[0-9]{2}$"
+    },
+    "Snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "income_uuid": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "income_xml_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "fiscal_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cash_application_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "amount": {
+          "$ref": "#/$defs/MoneyMXN"
+        }
+      },
+      "required": [
+        "income_uuid",
+        "income_xml_sha256",
+        "fiscal_revision",
+        "cash_application_id",
+        "amount"
+      ]
+    },
+    "Receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,6})?(Z|[+-]\\d{2}:\\d{2})$"
+        },
+        "fiscal_local_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "currency": {
+          "const": "MXN"
+        },
+        "payment_form": {
+          "const": "03"
+        },
+        "amount": {
+          "$ref": "#/$defs/MoneyMXN"
+        },
+        "reconciliation_evidence_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "operation_number": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 100
+        }
+      },
+      "required": [
+        "receipt_id",
+        "revision",
+        "received_at",
+        "fiscal_local_date",
+        "currency",
+        "payment_form",
+        "amount",
+        "reconciliation_evidence_sha256",
+        "source_ref"
+      ]
+    },
+    "RepIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contract_version": {
+          "const": "ppd-rep-intent/1.0"
+        },
+        "profile": {
+          "const": "payment-mxn-rep20-iva16/1"
+        },
+        "intent_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "origin_system": {
+          "const": "cotiza"
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "emitter_rfc": {
+          "type": "string",
+          "pattern": "^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$"
+        },
+        "receiver_rfc": {
+          "type": "string",
+          "pattern": "^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$"
+        },
+        "receipt": {
+          "$ref": "#/$defs/Receipt"
+        },
+        "applications": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/Snapshot"
+          }
+        },
+        "authorization_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "contract_version",
+        "profile",
+        "intent_id",
+        "origin_system",
+        "correlation_id",
+        "binding_id",
+        "emitter_rfc",
+        "receiver_rfc",
+        "receipt",
+        "applications",
+        "authorization_ref"
+      ]
+    }
+  }
+}

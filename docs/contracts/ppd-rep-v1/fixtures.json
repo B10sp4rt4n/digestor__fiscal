@@ -1,0 +1,69 @@
+{
+  "assurance": "synthetic_contract_examples_not_CFDI",
+  "scenario": {
+    "total": "11600.00",
+    "income_base": "10000.00",
+    "income_vat": "1600.00",
+    "payments": [
+      {
+        "amount": "4640.00",
+        "previous": "11600.00",
+        "remaining": "6960.00",
+        "part": 1,
+        "base": "4000.000000",
+        "vat": "640.000000"
+      },
+      {
+        "amount": "6960.00",
+        "previous": "6960.00",
+        "remaining": "0.00",
+        "part": 2,
+        "base": "6000.000000",
+        "vat": "960.000000"
+      }
+    ]
+  },
+  "valid_intent": {
+    "contract_version": "ppd-rep-intent/1.0",
+    "profile": "payment-mxn-rep20-iva16/1",
+    "intent_id": "00000000-0000-4000-8000-000000000001",
+    "origin_system": "cotiza",
+    "correlation_id": "00000000-0000-4000-8000-000000000002",
+    "binding_id": "synthetic-authorized-emitter-binding",
+    "emitter_rfc": "AAA010101AAA",
+    "receiver_rfc": "BBB010101BBB",
+    "receipt": {
+      "receipt_id": "synthetic-receipt-1",
+      "revision": 1,
+      "received_at": "2026-10-26T10:00:00-06:00",
+      "fiscal_local_date": "2026-10-26",
+      "currency": "MXN",
+      "payment_form": "03",
+      "amount": "4640.00",
+      "reconciliation_evidence_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "source_ref": "synthetic-statement-line-1"
+    },
+    "applications": [
+      {
+        "income_uuid": "00000000-0000-4000-8000-000000000003",
+        "income_xml_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "fiscal_revision": 0,
+        "cash_application_id": "synthetic-application-1",
+        "amount": "4640.00"
+      }
+    ],
+    "authorization_ref": "synthetic-decision-1"
+  },
+  "semantic_checks_outside_schema": [
+    "tenant/emitter binding and permissions",
+    "positive amounts",
+    "exact sum allocations equals receipt",
+    "unique invoice and application identity",
+    "XML hash refers to verified original",
+    "PPD99 and compatible fiscal profile of income",
+    "derived partiality and prior balance",
+    "versions and chronological order",
+    "evidence and immutable authorization scope",
+    "received_at normalized equals fiscal_local_date"
+  ]
+}

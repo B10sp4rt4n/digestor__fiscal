@@ -5,7 +5,7 @@ Never deploy this test server or import it into the production application.
 import os
 # Fix every runtime destination before application imports; never inherit real credentials.
 os.environ.update(DATABASE_URL='sqlite:///:memory:', AUTH_CONNECTOR='jwt',
-    FISCAL_PPD_ENABLED='true', FISCAL_REP_STAMP_ENABLED='true', FISCAL_CANCELLATION_ENABLED='true',
+    FISCAL_CORRECTIONS_ENABLED='true', FISCAL_PPD_ENABLED='true', JWT_SECRET_KEY='synthetic-fixture-only-not-a-real-key', FISCAL_REP_STAMP_ENABLED='true', FISCAL_CANCELLATION_ENABLED='true',
     TIMBRACFDI_ENV='sandbox', TIMBRACFDI_USE_SOAP='false', TIMBRACFDI_TOKEN='',
     TIMBRACFDI_SANDBOX_TOKEN='', TIMBRACFDI_PRODUCTION_TOKEN='')
 import argparse
@@ -25,25 +25,26 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.db.base import Base
 from app.db.session import get_db
-from app.api.routers import payments_v1, cancellations_v1
+from app.api.routers import payments_v1, cancellations_v1, fiscal_revisions_v1
 from app.models.commercial import ProductCatalog, BillingDraft, BillingDraftItem
 from app.models.fiscal_act import FiscalAct
+from app.models.fiscal_revision import FiscalRevision, FiscalRevisionAct
 from app.models.billing_payment import BillingPayment, PaymentReceipt, PaymentAct
 from app.models.billing_cancellation import BillingCancellation, CancellationAct
 from app.services import timbracfdi_client as pac
 from app.services.jwt_service import create_access_token
-from test_payment_cycle import seed, accepted, CTX
+from test_fiscal_revisions import seed_valid as seed, accepted, CTX
 
 engine = create_engine('sqlite:///:memory:', connect_args={'check_same_thread':False}, poolclass=StaticPool)
 Base.metadata.create_all(engine, tables=[m.__table__ for m in (ProductCatalog, BillingDraft, BillingDraftItem,
-    FiscalAct, BillingPayment, PaymentReceipt, PaymentAct, BillingCancellation, CancellationAct)])
+    FiscalRevision, FiscalRevisionAct, FiscalAct, BillingPayment, PaymentReceipt, PaymentAct, BillingCancellation, CancellationAct)])
 Session = sessionmaker(bind=engine)
 with Session() as db:
     original = seed(db)
     root = ET.fromstring(base64.b64decode(original.stamped_xml_base64))
     root.find('{http://www.sat.gob.mx/cfd/4}Complemento')[0].set('UUID', str(uuid4()))
     db.add(BillingDraft(id='cancel-invoice', company_id=CTX.tenant_id, stamp_status='stamped', status='stamped',
-        emitter_rfc=original.emitter_rfc, customer_rfc=original.customer_rfc,
+        emitter_rfc=original.emitter_rfc, customer_rfc=original.customer_rfc, total=116, subtotal=100, taxes=16, payment_method='PPD', payment_form='99',
         stamped_xml_base64=base64.b64encode(ET.tostring(root)).decode()))
     db.commit()
 
@@ -77,7 +78,7 @@ def retrieve(emitter, folio):
 
 pac.timbra_cfdi = stamp; pac.cancel_cfdi = cancel; pac.query_cfdi_status = query; pac.retrieve_cfdi = retrieve
 app = FastAPI()
-app.include_router(payments_v1.router); app.include_router(cancellations_v1.router)
+app.include_router(payments_v1.router); app.include_router(cancellations_v1.router); app.include_router(fiscal_revisions_v1.router)
 def db_override():
     with Session() as db: yield db
 app.dependency_overrides[get_db] = db_override

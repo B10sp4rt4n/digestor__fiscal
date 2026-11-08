@@ -14,6 +14,7 @@ from app.api.routers import cancellations_v1 as api, payments_v1 as payments
 from app.models.billing_cancellation import BillingCancellation, CancellationAct
 from app.models.billing_payment import BillingPayment, PaymentReceipt
 from app.models.commercial import BillingDraft
+from app.models.fiscal_revision import FiscalRevision, FiscalRevisionAct
 from app.schemas.billing_cancellation import CancelDocument, RecoverReceipt
 from app.services import billing_cancellations as svc
 from test_payment_cycle import db, seed, record, stamp, accepted, CTX, no_network, body
@@ -206,6 +207,7 @@ def test_postgres_migration_and_two_concurrent_requests(pg_engine, monkeypatch):
     module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
     with pg_engine.begin() as conn:
         module.op = Operations(MigrationContext.configure(conn)); module.upgrade(); module.upgrade()
+    Base.metadata.create_all(pg_engine, tables=[FiscalRevision.__table__,FiscalRevisionAct.__table__])
     with sessionmaker(bind=pg_engine)() as db: invoice = seed(db); folio = svc.target(db, invoice)[1]
     entered, release = Event(), Event(); payload = cancel_body()
     def provider(*args):

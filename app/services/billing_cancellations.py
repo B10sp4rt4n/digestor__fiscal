@@ -10,6 +10,8 @@ from app.models.billing_payment import BillingPayment, PaymentReceipt
 from app.models.commercial import BillingDraft
 from app.services.fiscal_acts import canonical, digest
 from app.services.timbracfdi_client import extract_stamp_uuid
+from app.services import fiscal_revisions as revisions
+from app.models.fiscal_revision import FiscalRevision
 
 NS = {'c': 'http://www.sat.gob.mx/cfd/4'}
 BLOCKING = {'processing', 'requested', 'unknown', 'cancelled'}
@@ -47,11 +49,17 @@ def target(db, draft, payment_id=None):
         fail('Identidad del XML original no coincide con la factura')
     if root.get('TipoDeComprobante') != ('P' if payment_id else 'I'):
         fail('Tipo de comprobante fuera del alcance')
-    return root, folio, content_hash
+    effective_xml, _, _ = revisions.context(db, draft, payment_id)
+    return parse_document(base64.b64encode(effective_xml.encode()).decode())
 
 
-def find(db, draft, payment_id=None, lock=False):
-    query = db.query(BillingCancellation).filter_by(company_id=draft.company_id, draft_id=draft.id, payment_id=payment_id)
+def find(db, draft, payment_id=None, lock=False, document_uuid=None):
+    if not document_uuid and payment_id:
+        receipt = db.query(PaymentReceipt).filter_by(payment_id=payment_id, company_id=draft.company_id).first()
+        if not receipt or receipt.status != 'stamped': return None
+    folio = document_uuid or target(db, draft, payment_id)[1]
+    query = db.query(BillingCancellation).filter_by(company_id=draft.company_id, draft_id=draft.id,
+        payment_id=payment_id, document_uuid=folio)
     if lock: query = query.with_for_update().populate_existing()
     return query.first()
 
@@ -67,12 +75,18 @@ def view(row):
 
 
 def assert_invoice_active(db, draft):
+    _, pending, _ = revisions.context(db, draft)
+    if pending: fail('Hay una sustitución de factura pendiente; confirma su emisión y cancelación original')
     row = find(db, draft)
     if row and row.status in BLOCKING: fail('Factura cancelada o con cancelación pendiente; no registrar ni timbrar nuevos pagos')
 
 
 def assert_receipt_active(db, draft, payment_id):
     assert_invoice_active(db, draft)
+    receipt = db.query(PaymentReceipt).filter_by(company_id=draft.company_id, payment_id=payment_id).first()
+    if receipt and receipt.status == 'stamped':
+        _, pending, _ = revisions.context(db, draft, payment_id)
+        if pending: fail('Hay una corrección de complemento pendiente; resuélvela antes de continuar')
     row = find(db, draft, payment_id)
     if row and row.status in BLOCKING: fail('Complemento cancelado o con cancelación pendiente; requiere revisión fiscal')
 
@@ -101,9 +115,17 @@ def append_act(db, row, ctx, action, before, evidence=None):
     db.flush()
 
 
-def reserve(db, draft, body, ctx, payment_id=None):
-    root, folio, document_hash = target(db, draft, payment_id)
+def reserve(db, draft, body, ctx, payment_id=None, source=None):
+    root, folio, document_hash = source or target(db, draft, payment_id)
     replacement_uuid = None
+    if body.replacement_revision_id:
+        replacement = db.query(FiscalRevision).filter_by(id=str(body.replacement_revision_id), company_id=draft.company_id,
+            draft_id=draft.id, payment_id=payment_id, source_uuid=folio).first()
+        if not replacement: fail('Sustitución no encontrada para este comprobante', 404)
+        revisions.verify(db, replacement)
+        if replacement.status != 'stamped' or not replacement.result_xml or not revisions.validate_result(replacement, replacement.result_xml):
+            fail('Primero confirma el XML de la sustitución exacta')
+        replacement_uuid = replacement.result_uuid
     if body.replacement_draft_id:
         if payment_id: fail('Sustitución de REP requiere revisión; no se acepta una factura como sustituto')
         replacement = db.query(BillingDraft).filter_by(id=str(body.replacement_draft_id), company_id=draft.company_id).first()
@@ -116,7 +138,7 @@ def reserve(db, draft, body, ctx, payment_id=None):
         if rroot.find('c:Emisor', NS).get('Rfc') != root.find('c:Emisor', NS).get('Rfc') or rroot.find('c:Receptor', NS).get('Rfc') != root.find('c:Receptor', NS).get('Rfc'):
             fail('La sustituta debe pertenecer al mismo emisor y receptor')
     intent = canonical({'reason': body.reason, 'replacement_uuid': replacement_uuid, 'document_uuid': folio})
-    existing = find(db, draft, payment_id, lock=True)
+    existing = find(db, draft, payment_id, lock=True, document_uuid=folio)
     if existing:
         if existing.intent != intent or existing.idempotency_key != str(body.idempotency_key) or existing.document_hash != document_hash:
             fail('Ya existe una solicitud para este comprobante; consulta su estado')

@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     FISCAL_PPD_ENABLED: bool = False
     FISCAL_REP_STAMP_ENABLED: bool = False
     FISCAL_CANCELLATION_ENABLED: bool = False
+    FISCAL_CORRECTIONS_ENABLED: bool = False
     DB_URL: str = "sqlite:///./local.db"
     DATABASE_URL: Optional[str] = None
     USE_SQLITE: bool = False

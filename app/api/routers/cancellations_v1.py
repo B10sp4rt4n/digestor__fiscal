@@ -27,10 +27,10 @@ def read(draft_id, ctx, db, payment_id=None):
     return service.view(service.find(db, draft, payment_id))
 
 
-def request(draft_id, body, ctx, db, payment_id=None):
+def request(draft_id, body, ctx, db, payment_id=None, source=None):
     enabled(); draft = get_draft(db, draft_id, ctx, lock=True)
     try:
-        row, claimed = service.reserve(db, draft, body, ctx, payment_id)
+        row, claimed = service.reserve(db, draft, body, ctx, payment_id, source=source)
         if not claimed: return service.view(row)
         emitter, intent = draft.emitter_rfc, json.loads(row.intent)
         row_id, folio = row.id, row.document_uuid
@@ -45,7 +45,7 @@ def request(draft_id, body, ctx, db, payment_id=None):
     except Exception:
         pass  # Unknown outcome retains reservation; never resubmit automatically.
     draft = get_draft(db, draft_id, ctx, lock=True)
-    row = service.find(db, draft, payment_id, lock=True)
+    row = service.find(db, draft, payment_id, lock=True, document_uuid=folio)
     if not row or row.id != row_id: service.fail('Cambió la solicitud de cancelación')
     # A concurrent status query can already have confirmed cancellation. Never regress it.
     if row.status != 'processing': return service.view(row)
@@ -59,10 +59,10 @@ def request(draft_id, body, ctx, db, payment_id=None):
     return service.view(row)
 
 
-def reconcile(draft_id, ctx, db, payment_id=None):
+def reconcile(draft_id, ctx, db, payment_id=None, source=None):
     enabled(); draft = get_draft(db, draft_id, ctx)
-    _, folio, document_hash = service.target(db, draft, payment_id)
-    row = service.find(db, draft, payment_id)
+    _, folio, document_hash = source or service.target(db, draft, payment_id)
+    row = service.find(db, draft, payment_id, document_uuid=folio)
     if not row: service.fail('Primero debe existir una solicitud de cancelación')
     if row.document_hash != document_hash: service.fail('Cambió el XML del comprobante')
     if row.status == 'cancelled': return service.view(row)
@@ -71,7 +71,7 @@ def reconcile(draft_id, ctx, db, payment_id=None):
     except Exception as exc:
         raise HTTPException(status_code=502, detail='Consulta sin confirmar; no se repitió la cancelación') from exc
     draft = get_draft(db, draft_id, ctx, lock=True)
-    row = service.find(db, draft, payment_id, lock=True)
+    row = service.find(db, draft, payment_id, lock=True, document_uuid=folio)
     if row.status == 'cancelled': return service.view(row)
     before = row.status
     row.status = service.sat_status(result, folio) or before

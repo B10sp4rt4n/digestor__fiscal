@@ -16,6 +16,7 @@ from app.db.session import engine
 import app.models.audit_log         # noqa: F401
 import app.models.billing_payment  # noqa: F401
 import app.models.billing_cancellation  # noqa: F401
+import app.models.fiscal_revision  # noqa: F401
 import app.models.commercial        # noqa: F401
 import app.models.csf              # noqa: F401
 import app.models.document_job     # noqa: F401
@@ -26,7 +27,7 @@ import app.models.evento           # noqa: F401
 import app.models.user             # noqa: F401
 
 from app.api.routers import audit_v1, backups, billing_v1, commercial_v1, csf, developer_portal, documents_v1, health, metrics_v1, upload, sync, sync_v1, telemetry as telemetry_router
-from app.api.routers import auth_router, payments_v1, cancellations_v1
+from app.api.routers import auth_router, payments_v1, cancellations_v1, fiscal_revisions_v1
 from app.api.routers import receptor_validate
 from app.services import telemetry
 from app.services.document_queue import document_queue
@@ -78,16 +79,21 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import inspect
         if not inspect(engine).has_table("billing_fiscal_acts"):
             raise RuntimeError("Apply reviewed fiscal-act migration before leaving maintenance")
-    if engine.dialect.name != "sqlite" and settings.FISCAL_PPD_ENABLED:
+    if engine.dialect.name != "sqlite" and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CORRECTIONS_ENABLED):
         from sqlalchemy import inspect
         if not all(inspect(engine).has_table(name) for name in ("billing_payments", "billing_payment_receipts", "billing_payment_acts")):
             raise RuntimeError("Apply reviewed PPD migration before enabling payments")
-    if engine.dialect.name != "sqlite" and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CANCELLATION_ENABLED):
+    if engine.dialect.name != "sqlite" and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CANCELLATION_ENABLED or settings.FISCAL_CORRECTIONS_ENABLED):
         from sqlalchemy import inspect
         if not all(inspect(engine).has_table(name) for name in ('billing_cancellations', 'billing_cancellation_acts')):
             raise RuntimeError('Apply reviewed cancellation migration before enabling fiscal cycle')
+    if engine.dialect.name != 'sqlite' and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CANCELLATION_ENABLED or settings.FISCAL_CORRECTIONS_ENABLED):
+        from sqlalchemy import inspect
+        if not all(inspect(engine).has_table(name) for name in ('billing_fiscal_revisions', 'billing_fiscal_revision_acts')):
+            raise RuntimeError('Apply reviewed fiscal correction migration before enabling fiscal cycle')
     # Crear tablas en modo dev (SQLite). En producción usar Alembic.
-    Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == 'sqlite':
+        Base.metadata.create_all(bind=engine)
 
     # Seed del primer usuario admin si no existe ninguno
     _seed_initial_admin()
@@ -129,6 +135,7 @@ app.include_router(billing_v1.router)
 app.include_router(commercial_v1.router)
 app.include_router(payments_v1.router)
 app.include_router(cancellations_v1.router)
+app.include_router(fiscal_revisions_v1.router)
 app.include_router(csf.router)
 app.include_router(documents_v1.router)
 app.include_router(metrics_v1.router)

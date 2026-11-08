@@ -37,7 +37,8 @@ def invoice_snapshot(draft):
         root = ET.fromstring(xml)
         expected = {'Version': '4.0', 'TipoDeComprobante': 'I', 'Moneda': 'MXN', 'MetodoPago': 'PPD', 'FormaPago': '99', 'Exportacion': '01'}
         if root.tag != '{'+CFDI+'}Comprobante' or any(root.get(k) != v for k, v in expected.items()): raise ValueError()
-        if root.get('Descuento') or root.find('c:CfdiRelacionados', NS) is not None: raise ValueError()
+        if root.get('Descuento'): raise ValueError()
+        if root.find('c:CfdiRelacionados', NS) is not None and not getattr(draft, '_verified_revision_uuid', None): raise ValueError()
         emitter, customer = root.find('c:Emisor', NS), root.find('c:Receptor', NS)
         if emitter is None or customer is None: raise ValueError()
         for node, fields in ((emitter, ('Rfc','Nombre','RegimenFiscal')), (customer, ('Rfc','Nombre','DomicilioFiscalReceptor','RegimenFiscalReceptor'))):

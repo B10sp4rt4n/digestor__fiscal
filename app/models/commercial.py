@@ -34,6 +34,7 @@ class ProductCatalog(Base):
 
 class BillingDraft(Base):
     __tablename__ = "billing_draft"
+    __table_args__ = (UniqueConstraint("company_id", "id", name="uq_billing_draft_company_id"),)
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     company_id = Column(String, nullable=False, index=True)

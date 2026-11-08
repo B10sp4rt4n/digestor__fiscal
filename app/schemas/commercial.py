@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from app.services.fiscal_rules import decimal_value
 
 
 class ProductCreateRequest(BaseModel):
@@ -80,6 +81,13 @@ class DraftItemInput(BaseModel):
     tax_rate: float | None = Field(default=None, ge=0)
     tax_object: str | None = None
 
+    @field_validator("quantity", "unit_price", "tax_rate", mode="before")
+    @classmethod
+    def fiscal_precision(cls, value, info):
+        if value is None:
+            return value
+        return float(decimal_value(value, positive=info.field_name == "quantity"))
+
 
 class DraftItemResponse(BaseModel):
     id: str
@@ -104,7 +112,7 @@ class BillingDraftCreateRequest(BaseModel):
     customer_zip: str | None = None
     customer_regimen: str | None = None
     customer_use_cfdi: str | None = Field(default="G03")
-    emitter_rfc: str | None = Field(default=None, description="Opcional; si no se envía, usa un emisor demo sandbox.")
+    emitter_rfc: str | None = Field(default=None, description="Sin emisor explícito la prefactura no está lista para timbrar.")
     emitter_name: str | None = None
     emitter_regimen: str | None = None
     place_of_issue: str | None = None

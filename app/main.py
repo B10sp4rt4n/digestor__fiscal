@@ -8,11 +8,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.core.maintenance import FiscalMaintenanceMiddleware, validate_maintenance_auth
 from app.db.base import Base
 from app.db.session import engine
 
 # Importar modelos para que Alembic/Base los registre
 import app.models.audit_log         # noqa: F401
+import app.models.billing_payment  # noqa: F401
+import app.models.billing_cancellation  # noqa: F401
+import app.models.fiscal_revision  # noqa: F401
 import app.models.commercial        # noqa: F401
 import app.models.csf              # noqa: F401
 import app.models.document_job     # noqa: F401
@@ -23,12 +27,17 @@ import app.models.evento           # noqa: F401
 import app.models.user             # noqa: F401
 
 from app.api.routers import audit_v1, backups, billing_v1, commercial_v1, csf, developer_portal, documents_v1, health, metrics_v1, upload, sync, sync_v1, telemetry as telemetry_router
-from app.api.routers import auth_router
+from app.api.routers import auth_router, payments_v1, cancellations_v1, fiscal_revisions_v1
 from app.api.routers import receptor_validate
 from app.api.routers import production_cancellation_v1
 from app.services import telemetry
 from app.services.document_queue import document_queue
 from app.services.outbound_delivery_service import outbound_delivery_worker
+
+# Capture once: middleware and lifespan must never disagree during this process.
+FISCAL_MAINTENANCE = settings.FISCAL_MAINTENANCE_MODE
+if FISCAL_MAINTENANCE:
+    validate_maintenance_auth(settings.AUTH_CONNECTOR, settings.AUTH_ALLOW_ANONYMOUS)
 
 
 async def _autopoll_loop():
@@ -63,11 +72,32 @@ def _seed_initial_admin() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if FISCAL_MAINTENANCE:
+        # No create_all, seed, background task or worker shutdown side effects.
+        yield
+        return
+    if engine.dialect.name != "sqlite":
+        from sqlalchemy import inspect
+        if not inspect(engine).has_table("billing_fiscal_acts"):
+            raise RuntimeError("Apply reviewed fiscal-act migration before leaving maintenance")
+    if engine.dialect.name != "sqlite" and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CORRECTIONS_ENABLED):
+        from sqlalchemy import inspect
+        if not all(inspect(engine).has_table(name) for name in ("billing_payments", "billing_payment_receipts", "billing_payment_acts")):
+            raise RuntimeError("Apply reviewed PPD migration before enabling payments")
+    if engine.dialect.name != "sqlite" and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CANCELLATION_ENABLED or settings.FISCAL_CORRECTIONS_ENABLED):
+        from sqlalchemy import inspect
+        if not all(inspect(engine).has_table(name) for name in ('billing_cancellations', 'billing_cancellation_acts')):
+            raise RuntimeError('Apply reviewed cancellation migration before enabling fiscal cycle')
+    if engine.dialect.name != 'sqlite' and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CANCELLATION_ENABLED or settings.FISCAL_CORRECTIONS_ENABLED):
+        from sqlalchemy import inspect
+        if not all(inspect(engine).has_table(name) for name in ('billing_fiscal_revisions', 'billing_fiscal_revision_acts')):
+            raise RuntimeError('Apply reviewed fiscal correction migration before enabling fiscal cycle')
     if settings.LIVE_CANCEL_ENABLED:
         from app.services.production_cancellation import assert_schema
         assert_schema(engine)
     # Crear tablas en modo dev (SQLite). En producción usar Alembic.
-    Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == 'sqlite':
+        Base.metadata.create_all(bind=engine)
 
     # Seed del primer usuario admin si no existe ninguno
     _seed_initial_admin()
@@ -98,6 +128,7 @@ app = FastAPI(
     version=settings.SERVICE_VERSION,
     lifespan=lifespan,
 )
+app.add_middleware(FiscalMaintenanceMiddleware, enabled=FISCAL_MAINTENANCE)
 
 app.include_router(auth_router.router)
 app.include_router(developer_portal.router)
@@ -107,6 +138,9 @@ app.include_router(backups.router)
 app.include_router(billing_v1.router)
 app.include_router(production_cancellation_v1.router)
 app.include_router(commercial_v1.router)
+app.include_router(payments_v1.router)
+app.include_router(cancellations_v1.router)
+app.include_router(fiscal_revisions_v1.router)
 app.include_router(csf.router)
 app.include_router(documents_v1.router)
 app.include_router(metrics_v1.router)
@@ -115,3 +149,4 @@ app.include_router(sync.router)
 app.include_router(sync_v1.router)
 app.include_router(telemetry_router.router)
 app.include_router(receptor_validate.router)
+

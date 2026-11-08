@@ -1,0 +1,48 @@
+"""An environment label must not route PPD tests to a production endpoint."""
+from urllib.parse import urlparse
+from app.core.config import settings
+
+
+def ppd_transport_is_sandbox():
+    if settings.timbracfdi_environment != 'sandbox': return False
+    url=settings.TIMBRACFDI_SOAP_URL if settings.TIMBRACFDI_USE_SOAP else settings.timbracfdi_active_base_url
+    try:
+        parsed=urlparse(url)
+        return (parsed.scheme=='https' and parsed.hostname=='pruebas.timbracfdi33.mx'
+                and parsed.port in (None,443,1444) and parsed.username is None and parsed.password is None)
+    except ValueError:
+        return False
+
+
+def rest_transport_is_sandbox():
+    if settings.timbracfdi_environment != 'sandbox': return False
+    try:
+        parsed = urlparse(settings.timbracfdi_active_base_url)
+        return (parsed.scheme == 'https' and parsed.hostname == 'pruebas.timbracfdi33.mx'
+                and parsed.port in (None, 443, 1444) and parsed.username is None and parsed.password is None)
+    except ValueError:
+        return False
+
+
+def ppd_production_configured():
+    """Separate authorization and exact destination; no change to PAC credentials."""
+    if (settings.TIMBRACFDI_ENV.strip().lower() != 'production'
+            or not settings.FISCAL_PPD_PRODUCTION_ENABLED
+            or not settings.FISCAL_PPD_PRODUCTION_EMITTER_RFC
+            or not settings.timbracfdi_active_token):
+        return False
+    try:
+        url = settings.TIMBRACFDI_SOAP_URL if settings.TIMBRACFDI_USE_SOAP else settings.timbracfdi_active_base_url
+        parsed = urlparse(url)
+        return (parsed.scheme == 'https' and parsed.hostname == 'timbracfdi33.mx'
+            and parsed.username is None and parsed.password is None and not parsed.query and not parsed.fragment
+            and ((settings.TIMBRACFDI_USE_SOAP and parsed.port == 1443 and parsed.path == '/Timbrado.asmx')
+                 or (not settings.TIMBRACFDI_USE_SOAP and parsed.port == 1444 and parsed.path.rstrip('/') == '/api/v2')))
+    except ValueError:
+        return False
+
+
+def ppd_transport_is_allowed(emitter_rfc=None):
+    if ppd_transport_is_sandbox(): return True
+    return ppd_production_configured() and (emitter_rfc is None or
+        emitter_rfc == settings.FISCAL_PPD_PRODUCTION_EMITTER_RFC)

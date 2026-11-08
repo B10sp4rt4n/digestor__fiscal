@@ -30,6 +30,8 @@ from app.schemas.commercial import (
     ProductUpdateRequest,
 )
 from app.services import timbracfdi_client
+from app.services import fiscal_acts
+from app.services.fiscal_rules import decimal_value, money, unit_text, scenario_issues
 from app.services.timbracfdi_client import TimbraCFDIConfigurationError
 
 router = APIRouter(tags=["commercial-v1"])
@@ -105,7 +107,7 @@ def _serialize_item(item: BillingDraftItem) -> DraftItemResponse:
         sat_product_code=item.sat_product_code,
         unit_code=item.unit_code,
         quantity=float(item.quantity),
-        unit_price=_money(item.unit_price),
+        unit_price=float(item.unit_price),
         tax_rate=_rate(item.tax_rate),
         tax_object=item.tax_object,
         line_subtotal=_money(item.line_subtotal),
@@ -132,7 +134,7 @@ def _missing_fields(draft: BillingDraft) -> list[str]:
             missing.append(field_name)
     if not draft.items:
         missing.append("items")
-    return missing
+    return list(dict.fromkeys(missing + scenario_issues(draft)))
 
 
 def _serialize_draft(draft: BillingDraft) -> BillingDraftResponse:
@@ -160,7 +162,7 @@ def _serialize_draft(draft: BillingDraft) -> BillingDraftResponse:
         subtotal=_money(draft.subtotal),
         taxes=_money(draft.taxes),
         total=_money(draft.total),
-        ready_to_stamp=len(missing_fields) == 0 and draft.status != "stamped",
+        ready_to_stamp=len(missing_fields) == 0 and draft.status != "stamped" and draft.stamp_status in ("not_sent", "rejected"),
         missing_fields=missing_fields,
         items=[_serialize_item(item) for item in draft.items],
         stamped_at=draft.stamped_at,
@@ -171,26 +173,28 @@ def _serialize_draft(draft: BillingDraft) -> BillingDraftResponse:
 
 
 def _set_line_totals(item: BillingDraftItem) -> None:
-    subtotal = _money((item.quantity or 0) * (item.unit_price or 0))
-    taxes = 0.0
+    quantity = decimal_value(item.quantity, positive=True)
+    price = decimal_value(item.unit_price)
+    subtotal = money(quantity * price)
+    taxes = Decimal(0)
     if (item.tax_object or "02") == "02" and (item.tax_rate or 0) > 0:
-        taxes = _money(subtotal * float(item.tax_rate or 0))
-    item.line_subtotal = subtotal
-    item.line_taxes = taxes
-    item.line_total = _money(subtotal + taxes)
+        taxes = money(subtotal * decimal_value(item.tax_rate))
+    item.line_subtotal = float(subtotal)
+    item.line_taxes = float(taxes)
+    item.line_total = float(money(subtotal + taxes))
 
 
-def _recalculate_draft(draft: BillingDraft) -> None:
-    subtotal = 0.0
-    taxes = 0.0
+def _calculate_draft(draft: BillingDraft) -> None:
+    subtotal = Decimal(0)
+    taxes = Decimal(0)
     for item in draft.items:
         _set_line_totals(item)
-        subtotal += float(item.line_subtotal or 0)
-        taxes += float(item.line_taxes or 0)
+        subtotal += Decimal(str(item.line_subtotal))
+        taxes += Decimal(str(item.line_taxes))
 
-    draft.subtotal = _money(subtotal)
-    draft.taxes = _money(taxes)
-    draft.total = _money(subtotal + taxes)
+    draft.subtotal = float(money(subtotal))
+    draft.taxes = float(money(taxes))
+    draft.total = float(money(subtotal + taxes))
 
     if draft.stamped_at:
         draft.status = "stamped"
@@ -203,6 +207,13 @@ def _recalculate_draft(draft: BillingDraft) -> None:
         draft.status = "ready_to_stamp"
         if draft.stamp_status == "stamped":
             draft.stamp_status = "not_sent"
+
+
+def _recalculate_draft(draft: BillingDraft) -> None:
+    try:
+        _calculate_draft(draft)
+    except (ValueError, ArithmeticError) as exc:
+        raise HTTPException(status_code=422, detail="Totales o precisión fiscal no soportados") from exc
 
 
 def _resolve_item_payload(db: Session, company_id: str, payload: DraftItemInput) -> BillingDraftItem:
@@ -225,14 +236,17 @@ def _resolve_item_payload(db: Session, company_id: str, payload: DraftItemInput)
         product_id=product.id if product else None,
         sku=payload.sku or (product.sku if product else None),
         description=description,
-        sat_product_code=payload.sat_product_code or (product.sat_product_code if product else "78101800"),
-        unit_code=payload.unit_code or (product.unit_code if product else "E48"),
+        sat_product_code=payload.sat_product_code or (product.sat_product_code if product else ""),
+        unit_code=payload.unit_code or (product.unit_code if product else ""),
         quantity=float(payload.quantity),
         unit_price=float(payload.unit_price if payload.unit_price is not None else (product.price if product else 0.0)),
         tax_rate=float(payload.tax_rate if payload.tax_rate is not None else (product.tax_rate if product else 0.16)),
         tax_object=payload.tax_object or (product.tax_object if product else "02"),
     )
-    _set_line_totals(item)
+    try:
+        _set_line_totals(item)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Importe o precision de partida no soportados") from exc
     return item
 
 
@@ -277,8 +291,8 @@ def _build_preview_html(draft: BillingDraft) -> str:
         <tr>
           <td>{escape(item.sku or "-")}</td>
           <td>{escape(item.description)}</td>
-          <td class=\"num\">{item.quantity:.2f}</td>
-          <td class=\"num\">${item.unit_price:,.2f}</td>
+          <td class=\"num\">{unit_text(item.quantity)}</td>
+          <td class=\"num\">${unit_text(item.unit_price)}</td>
           <td class=\"num\">${item.line_subtotal:,.2f}</td>
         </tr>
         """
@@ -388,8 +402,8 @@ def _build_prefactura_pdf_html(draft: BillingDraft, is_stamped: bool = False) ->
         <tr>
           <td class="sku">{escape(item.sku or '-')}</td>
           <td>{escape(item.description)}</td>
-          <td class="num">{item.quantity:.2f}</td>
-          <td class="num">${item.unit_price:,.2f}</td>
+          <td class="num">{unit_text(item.quantity)}</td>
+          <td class="num">${unit_text(item.unit_price)}</td>
           <td class="num">{int((item.tax_rate or 0) * 100)}%</td>
           <td class="num">${item.line_subtotal:,.2f}</td>
         </tr>
@@ -563,20 +577,20 @@ def _build_cfdi_xml(draft: BillingDraft) -> str:
         )
 
     concepts_xml: list[str] = []
-    traslados: dict[str, dict[str, float]] = defaultdict(lambda: {"base": 0.0, "importe": 0.0})
+    traslados: dict[str, dict[str, Decimal]] = defaultdict(lambda: {"base": Decimal(0), "importe": Decimal(0)})
 
     for index, item in enumerate(draft.items, start=1):
         subtotal = _money(item.line_subtotal)
         taxes = _money(item.line_taxes)
         tax_object = item.tax_object or "02"
-        quantity = float(item.quantity or 0)
-        unit_price = _money(item.unit_price)
+        quantity = unit_text(item.quantity)
+        unit_price = unit_text(item.unit_price)
 
         impuestos_xml = ""
-        if tax_object == "02" and taxes > 0:
+        if tax_object == "02":
             rate_key = f"{float(item.tax_rate or 0):.6f}"
-            traslados[rate_key]["base"] += subtotal
-            traslados[rate_key]["importe"] += taxes
+            traslados[rate_key]["base"] += Decimal(str(subtotal))
+            traslados[rate_key]["importe"] += Decimal(str(taxes))
             impuestos_xml = f"""
             <cfdi:Impuestos>
               <cfdi:Traslados>
@@ -587,7 +601,7 @@ def _build_cfdi_xml(draft: BillingDraft) -> str:
 
         concepts_xml.append(
             f"""
-            <cfdi:Concepto ClaveProdServ=\"{escape(item.sat_product_code or '78101800', quote=True)}\" NoIdentificacion=\"{escape(item.sku or f'ITEM-{index}', quote=True)}\" Cantidad=\"{quantity:.2f}\" ClaveUnidad=\"{escape(item.unit_code or 'E48', quote=True)}\" Descripcion=\"{escape(item.description, quote=True)}\" ValorUnitario=\"{unit_price:.2f}\" Importe=\"{subtotal:.2f}\" ObjetoImp=\"{escape(tax_object, quote=True)}\">{impuestos_xml}
+            <cfdi:Concepto ClaveProdServ=\"{escape(item.sat_product_code, quote=True)}\" NoIdentificacion=\"{escape(item.sku or f'ITEM-{index}', quote=True)}\" Cantidad=\"{quantity}\" ClaveUnidad=\"{escape(item.unit_code, quote=True)}\" Descripcion=\"{escape(item.description, quote=True)}\" ValorUnitario=\"{unit_price}\" Importe=\"{subtotal:.2f}\" ObjetoImp=\"{escape(tax_object, quote=True)}\">{impuestos_xml}
             </cfdi:Concepto>
             """
         )
@@ -760,10 +774,10 @@ def create_billing_draft(
         customer_zip=body.customer_zip,
         customer_regimen=body.customer_regimen,
         customer_use_cfdi=body.customer_use_cfdi,
-        emitter_rfc=body.emitter_rfc or "IIA040805DZ4",
-        emitter_name=body.emitter_name or "INDUSTRIA ILUMINADORA DE ALMACENES",
-        emitter_regimen=body.emitter_regimen or "626",
-        place_of_issue=body.place_of_issue or "32690",
+        emitter_rfc=body.emitter_rfc or "",
+        emitter_name=body.emitter_name or "",
+        emitter_regimen=body.emitter_regimen or "",
+        place_of_issue=body.place_of_issue or "",
         currency=body.currency,
         payment_method=body.payment_method,
         payment_form=body.payment_form,
@@ -776,6 +790,9 @@ def create_billing_draft(
     db.flush()
     _replace_items(db, draft, cid, body.items)
     _recalculate_draft(draft)
+    fiscal_acts.append(db, draft, ctx, "draft_created",
+                      {"status": None, "stamp_status": "absent", "has_xml": False, "has_stamp_time": False},
+                      {"draft_data_sha256": fiscal_acts.draft_digest(draft)})
     db.commit()
     draft = _get_draft_or_404(db, cid, draft.id)
     return _serialize_draft(draft)
@@ -817,6 +834,33 @@ def get_billing_draft(
     return _serialize_draft(draft)
 
 
+@router.get(
+    "/v1/billing/drafts/{draft_id}/stamp-result",
+    summary="Consultar resultado de timbrado sin solicitar otro timbre",
+)
+def get_billing_draft_stamp_result(
+    draft_id: str,
+    company_id: str | None = Query(default=None),
+    ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
+    db: Session = Depends(get_db),
+):
+    cid = enforce_tenant_scope(ctx, company_id)
+    draft = _get_draft_or_404(db, cid, draft_id)
+    xml_base64 = draft.stamped_xml_base64 if draft.stamp_status == "stamped" else None
+    uuid_value = None
+    if xml_base64:
+        try:
+            xml = base64.b64decode(xml_base64).decode("utf-8")
+            uuid_value = timbracfdi_client.extract_stamp_uuid(xml)
+        except (ValueError, UnicodeDecodeError, base64.binascii.Error):
+            pass
+    return {
+        "stamp_status": draft.stamp_status,
+        "uuid": uuid_value,
+        "xml_base64": xml_base64,
+    }
+
+
 @router.patch(
     "/v1/billing/drafts/{draft_id}",
     response_model=BillingDraftResponse,
@@ -830,8 +874,22 @@ def update_billing_draft(
     db: Session = Depends(get_db),
 ):
     cid = enforce_tenant_scope(ctx, company_id)
-    draft = _get_draft_or_404(db, cid, draft_id)
+    # El bloqueo de fila serializa la edición contra la reserva atomica
+    # del timbrado. Sin él, PATCH podria pisar datos del CFDI en vuelo.
+    draft = (
+        db.query(BillingDraft)
+        .filter(BillingDraft.id == draft_id, BillingDraft.company_id == cid)
+        .with_for_update()
+        .first()
+    )
+    if not draft:
+        raise HTTPException(status_code=404, detail="Prefactura no encontrada para este tenant.")
+    if (draft.stamp_status in ("processing", "unknown", "stamped")
+            or draft.status == "stamped" or draft.stamped_at is not None
+            or draft.stamped_xml_base64 is not None):
+        raise HTTPException(status_code=409, detail="No se puede modificar una prefactura timbrada o con timbrado pendiente de conciliacion.")
 
+    before = fiscal_acts.state(draft)
     updates = body.model_dump(exclude_unset=True, exclude={"items"})
     for field_name, value in updates.items():
         setattr(draft, field_name, value)
@@ -839,7 +897,8 @@ def update_billing_draft(
     if body.items is not None:
         _replace_items(db, draft, cid, body.items)
     _recalculate_draft(draft)
-
+    fiscal_acts.append(db, draft, ctx, "draft_edited", before,
+                      {"draft_data_sha256": fiscal_acts.draft_digest(draft)})
     db.commit()
     draft = _get_draft_or_404(db, cid, draft_id)
     return _serialize_draft(draft)
@@ -996,7 +1055,7 @@ def download_billing_draft_pdf(
         pdf.cell(20, 6, _f(item.sku or item.sat_product_code), border=1, fill=fill_row)
         pdf.cell(80, 6, desc_short, border=1, fill=fill_row)
         pdf.cell(15, 6, str(item.quantity or 1), align="R", border=1, fill=fill_row)
-        pdf.cell(25, 6, _money(item.unit_price), align="R", border=1, fill=fill_row)
+        pdf.cell(25, 6, unit_text(item.unit_price), align="R", border=1, fill=fill_row)
         pdf.cell(25, 6, _money(item.line_subtotal), align="R", border=1, fill=fill_row)
         pdf.ln()
         fill_row = not fill_row
@@ -1050,30 +1109,97 @@ def stamp_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
+    if (draft.status == "stamped" or draft.stamp_status == "stamped"
+            or draft.stamped_at is not None or draft.stamped_xml_base64 is not None):
+        raise HTTPException(status_code=409, detail="Esta prefactura ya fue timbrada.")
+    if draft.stamp_status in ("processing", "unknown"):
+        raise HTTPException(
+            status_code=409,
+            detail="El timbrado está en proceso o su resultado es incierto. Conciliar con el PAC antes de reintentar.",
+        )
+    if _missing_fields(draft):
+        raise HTTPException(status_code=422, detail="La prefactura tiene datos pendientes y no puede timbrarse.")
 
-    xml = _build_cfdi_xml(draft)
-    xml_base64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
+    # Reserva atomica y persistente ANTES de llamar al PAC. No se mantiene
+    # una transaccion abierta durante el request de red. Ante incertidumbre,
+    # el estado permanece bloqueado: jamas reintentar a ciegas.
+    before = fiscal_acts.state(draft)
+    claimed = (
+        db.query(BillingDraft)
+        .filter(
+            BillingDraft.id == draft_id,
+            BillingDraft.company_id == cid,
+            BillingDraft.stamp_status.in_(("not_sent", "rejected")),
+            BillingDraft.stamped_at.is_(None),
+            BillingDraft.stamped_xml_base64.is_(None),
+            BillingDraft.status != "stamped",
+        )
+        .update({BillingDraft.stamp_status: "processing"}, synchronize_session=False)
+    )
+    if claimed != 1:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Otra solicitud ya reservó o emitió esta factura.")
+    db.expire_all()
+    draft = _get_draft_or_404(db, cid, draft_id)
+    fiscal_acts.append(db, draft, ctx, "stamp_reserved", before)
+    db.commit()
+    draft = _get_draft_or_404(db, cid, draft_id)
+    before = fiscal_acts.state(draft)
+
+    try:
+        xml = _build_cfdi_xml(draft)
+        xml_base64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
+    except Exception as exc:
+        # Fallo local antes de llamar al PAC: seguro liberar la reserva.
+        draft.stamp_status = "not_sent"
+        fiscal_acts.append(db, draft, ctx, "local_validation_failed", before)
+        db.commit()
+        raise HTTPException(status_code=422, detail="No se pudo generar el XML para timbrado.") from exc
     support_id = body.id_comprobante or f"draft-{draft.id}"
+    evidence = {"request_xml_sha256": fiscal_acts.digest(xml)}
+    fiscal_acts.append(db, draft, ctx, "request_prepared", before, evidence)
+    db.commit()
+    before = fiscal_acts.state(draft)
 
     try:
         result = timbracfdi_client.timbra_cfdi(xml_base64=xml_base64, id_comprobante=support_id)
     except TimbraCFDIConfigurationError as exc:
+        # Error comprobado ANTES del envio: es seguro liberar la reserva.
+        draft.stamp_status = "not_sent"
+        fiscal_acts.append(db, draft, ctx, "provider_not_called", before, evidence)
+        db.commit()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"No fue posible timbrar la prefactura: {exc}") from exc
+        # Un timeout o error HTTP no prueba que el PAC NO haya timbrado.
+        draft.stamp_status = "unknown"
+        fiscal_acts.append(db, draft, ctx, "provider_result_unknown", before, evidence)
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo confirmar el resultado del PAC. No vuelvas a timbrar; requiere conciliacion.",
+        ) from exc
 
     stamp_info = timbracfdi_client.extract_stamped_document(result)
-    stamped_xml_base64 = (
-        base64.b64encode(stamp_info["stamped_xml"].encode("utf-8")).decode("ascii")
-        if stamp_info["stamped_xml"]
-        else xml_base64
-    )
+    stamped_xml = stamp_info["stamped_xml"]
+    has_valid_timbre = timbracfdi_client.extract_stamp_uuid(stamped_xml) is not None
 
-    draft.stamped_xml_base64 = stamped_xml_base64
     draft.stamped_response_json = json.dumps(result.get("provider_response"), ensure_ascii=False)
-    draft.stamp_status = "stamped" if stamp_info["success"] else "rejected"
+
+    if ((stamp_info["success"] and not has_valid_timbre)
+            or (not stamp_info["success"] and not timbracfdi_client.is_explicit_stamp_rejection(result))):
+        # Un OK sin XML firmado es un resultado incierto, no guardar
+        # el XML original como si fuera un CFDI valido ni emitir otro timbre.
+        draft.stamp_status = "unknown"
+        fiscal_acts.append(db, draft, ctx, "provider_result_unknown", before, evidence)
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail="La respuesta del PAC no confirma un timbre ni un rechazo explícito. Requiere conciliacion antes de reintentar.",
+        )
 
     if stamp_info["success"]:
+        draft.stamped_xml_base64 = base64.b64encode(stamped_xml.encode("utf-8")).decode("ascii")
+        draft.stamp_status = "stamped"
         draft.stamped_at = datetime.utcnow()
         draft.status = "stamped"
         db.add(
@@ -1087,14 +1213,19 @@ def stamp_billing_draft(
                 evt_hash=f"draft-stamped:{draft.id}:{uuid.uuid4()}",
             )
         )
+    else:
+        # Rechazo explicito del PAC: el operador puede corregir y reenviar.
+        draft.stamp_status = "rejected"
 
+    if stamp_info["success"]:
+        evidence["result_xml_sha256"] = fiscal_acts.digest(stamped_xml)
+    fiscal_acts.append(db, draft, ctx, "stamp_confirmed" if stamp_info["success"] else "stamp_rejected", before, evidence)
     db.commit()
     draft = _get_draft_or_404(db, cid, draft.id)
-
     return BillingDraftStampResponse(
         draft=_serialize_draft(draft),
-        ok=stamp_info["success"],
+        ok=bool(stamp_info["success"]),
         remote_status_code=int(result.get("status_code", 0)),
         provider_response=result.get("provider_response"),
-        xml_base64=stamped_xml_base64,
+        xml_base64=draft.stamped_xml_base64 or "",
     )

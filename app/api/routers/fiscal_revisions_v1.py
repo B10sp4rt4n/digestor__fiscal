@@ -11,7 +11,7 @@ from app.core.fiscal_sandbox import fiscal_operation_allowed, fiscal_operation_i
 from app.db.session import get_db
 from app.api.routers.payments_v1 import get_draft, read_roles, write_roles
 from app.api.routers import cancellations_v1
-from app.schemas.fiscal_revision import CreateFiscalRevision
+from app.schemas.fiscal_revision import CreateFiscalRevision, RevisionOperation
 from app.schemas.billing_cancellation import RecoverReceipt, CancelDocument
 from app.services import fiscal_revisions as svc, timbracfdi_client as pac, fiscal_production as production
 
@@ -58,6 +58,8 @@ def action(draft_id, operation, body, ctx, db, payment_id=None):
         return {**value, 'can_correct':not old and cancelled is None}
 
     row = latest(db, draft, payment_id)
+    if live_mode and (not body or str(getattr(body,'revision_id',None)) != row.id):
+        svc.fail('La corrección confirmada cambió; revisa la versión actual',422)
     if operation == 'abandon':
         if row.status not in {'prepared', 'rejected'} or row.result_xml or row.result_uuid:
             svc.fail('No se puede descartar una emisión en proceso, incierta o confirmada')
@@ -66,7 +68,7 @@ def action(draft_id, operation, body, ctx, db, payment_id=None):
     if operation in {'cancel-original', 'confirm-cancellation'}:
         if row.status != 'stamped': svc.fail('Primero debe confirmarse el comprobante sustituto')
         cancel_body = CancelDocument(idempotency_key=uuid5(NAMESPACE_URL, 'cancel-revision:'+row.id),
-            reason='01', replacement_revision_id=row.id)
+            reason='01', replacement_revision_id=row.id, expected_uuid=row.source_uuid)
         source = (svc.parse(row.source_xml), row.source_uuid, svc.digest(row.source_xml))
         if operation == 'cancel-original':
             cancellations_v1.request(draft_id, cancel_body, ctx, db, payment_id, source=source)
@@ -134,8 +136,8 @@ def recover_invoice(draft_id: str, body: RecoverReceipt, ctx: SecurityContext=De
 
 
 @router.post('/{draft_id}/correction/{operation}')
-def invoice_action(draft_id: str, operation: Literal['stamp', 'abandon', 'cancel-original', 'confirm-cancellation'], ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
-    return action(draft_id, operation, None, ctx, db)
+def invoice_action(draft_id: str, operation: Literal['stamp', 'abandon', 'cancel-original', 'confirm-cancellation'], body: RevisionOperation | None = None, ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
+    return action(draft_id, operation, body, ctx, db)
 
 
 @router.get('/{draft_id}/payments/{payment_id}/receipt/correction')
@@ -154,5 +156,5 @@ def recover_receipt(draft_id: str, payment_id: str, body: RecoverReceipt, ctx: S
 
 
 @router.post('/{draft_id}/payments/{payment_id}/receipt/correction/{operation}')
-def receipt_action(draft_id: str, payment_id: str, operation: Literal['stamp', 'abandon', 'cancel-original', 'confirm-cancellation'], ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
-    return action(draft_id, operation, None, ctx, db, payment_id)
+def receipt_action(draft_id: str, payment_id: str, operation: Literal['stamp', 'abandon', 'cancel-original', 'confirm-cancellation'], body: RevisionOperation | None = None, ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
+    return action(draft_id, operation, body, ctx, db, payment_id)

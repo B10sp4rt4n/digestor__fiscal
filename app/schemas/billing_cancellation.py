@@ -7,6 +7,7 @@ class CancelDocument(BaseModel):
     model_config = ConfigDict(extra='forbid')
     idempotency_key: UUID
     reason: Literal['01', '02', '03']
+    expected_uuid: UUID | None = None
     replacement_draft_id: UUID | None = None
     replacement_revision_id: UUID | None = None
 
@@ -21,3 +22,4 @@ class CancelDocument(BaseModel):
 class RecoverReceipt(BaseModel):
     model_config = ConfigDict(extra='forbid')
     receipt_uuid: UUID
+    revision_id: UUID | None = None

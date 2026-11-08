@@ -22,7 +22,7 @@ La sustitución conserva RFC, importes y cobros; permite corregir los datos fisc
 | Historial del piloto anterior | Conservar XML, acuse y estado aunque se retire su habilitador |
 | Acceso ajeno | Bloquear tenant/emisor/rol/origen no autorizado |
 
-Cotiza muestra consecuencias y confirmaciones de producción. Los controles nuevos se muestran a administración con sesión Clerk. Las confirmaciones se validan en servidor. El PDF original mantiene su condición fiscal, incluidas sustituciones históricas. El panel del piloto no se duplica al habilitar el flujo general.
+Cotiza muestra consecuencias y confirmaciones de producción. Los controles nuevos se muestran a administración con sesión Clerk. Las confirmaciones se validan en servidor y quedan ligadas al UUID y revision_id revisados; un cambio concurrente bloquea la operación y exige revisar el expediente actual. El PDF original mantiene su condición fiscal, incluidas sustituciones históricas. El panel del piloto no se duplica al habilitar el flujo general.
 
 ## Publicación
 

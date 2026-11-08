@@ -53,6 +53,26 @@ def _normalize_response(response: requests.Response) -> dict[str, Any]:
     }
 
 
+def _fiscal_rest(operation: str, payload: dict[str, str]) -> dict[str, Any]:
+    # These documented operations use REST only. Never follow a credentialed redirect.
+    response = requests.post(f'{_base_url()}/Timbrado/{operation}', json=payload,
+        headers=_headers(), timeout=settings.TIMBRACFDI_TIMEOUT, allow_redirects=False)
+    return _normalize_response(response)
+
+
+def cancel_cfdi(emitter_rfc: str, folio: str, reason: str, replacement_uuid: str | None = None):
+    return _fiscal_rest('CancelaCFDIAck', {'RfcEmisor': emitter_rfc, 'FolioFiscal': folio,
+        'MotivoCancelacion': reason, 'FolioFiscalSustitucion': replacement_uuid or ''})
+
+
+def query_cfdi_status(folio: str):
+    return _fiscal_rest('ConsultaEstatusSat', {'FolioFiscal': folio})
+
+
+def retrieve_cfdi(emitter_rfc: str, folio: str):
+    return _fiscal_rest('ObtieneCFDI', {'RfcEmisor': emitter_rfc, 'FolioFiscal': folio})
+
+
 _DEMO_CFDI_XML_TEMPLATE = dedent(
     """\
     <?xml version="1.0" encoding="utf-8"?>

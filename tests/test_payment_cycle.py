@@ -16,13 +16,14 @@ from app.db.base import Base
 from app.models.commercial import ProductCatalog, BillingDraft, BillingDraftItem
 from app.models.billing_payment import BillingPayment, PaymentReceipt, PaymentAct
 from app.models.fiscal_act import FiscalAct
+from app.models.billing_cancellation import BillingCancellation, CancellationAct
 from app.api.routers import payments_v1 as api, commercial_v1 as commercial
 from app.schemas.billing_payment import RegisterPayment
 from app.services import payment_receipts as svc
 from test_billing_stamp_integration import CTX, pg_engine  # guarded disposable PG fixture
 
 TABLES = [ProductCatalog.__table__, BillingDraft.__table__, BillingDraftItem.__table__, FiscalAct.__table__,
-          BillingPayment.__table__, PaymentReceipt.__table__, PaymentAct.__table__]
+          BillingPayment.__table__, PaymentReceipt.__table__, PaymentAct.__table__, BillingCancellation.__table__, CancellationAct.__table__]
 
 
 @pytest.fixture(autouse=True)
@@ -226,7 +227,7 @@ def test_no_implicit_emitter_when_request_omits_it(db):
 def test_postgres_simultaneous_overpayment_serializes(pg_engine):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
-    Base.metadata.create_all(pg_engine,tables=[BillingPayment.__table__,PaymentReceipt.__table__,PaymentAct.__table__])
+    Base.metadata.create_all(pg_engine,tables=[BillingPayment.__table__,PaymentReceipt.__table__,PaymentAct.__table__,BillingCancellation.__table__,CancellationAct.__table__])
     with sessionmaker(bind=pg_engine)() as db: seed(db)
     barrier=Barrier(2)
     def attempt(number):
@@ -252,6 +253,7 @@ def test_postgres_payment_migration_and_evidence_guards(pg_engine):
     spec=importlib.util.spec_from_file_location('payment_migration',path); module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     with pg_engine.begin() as conn:
         module.op=Operations(MigrationContext.configure(conn));module.upgrade();module.upgrade()
+    Base.metadata.create_all(pg_engine,tables=[BillingCancellation.__table__,CancellationAct.__table__])
     with sessionmaker(bind=pg_engine)() as db:
         seed(db); record(db)
     for table in ('billing_payments','billing_payment_acts'):
@@ -300,7 +302,7 @@ def test_http_jwt_roles_tenants_and_payload_guards(db):
 def test_postgres_simultaneous_same_payment_is_idempotent(pg_engine):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
-    Base.metadata.create_all(pg_engine,tables=[BillingPayment.__table__,PaymentReceipt.__table__,PaymentAct.__table__])
+    Base.metadata.create_all(pg_engine,tables=[BillingPayment.__table__,PaymentReceipt.__table__,PaymentAct.__table__,BillingCancellation.__table__,CancellationAct.__table__])
     with sessionmaker(bind=pg_engine)() as db: seed(db)
     barrier=Barrier(2); request=body('58','BANK-SAME')
     def attempt(_):
@@ -315,7 +317,7 @@ def test_postgres_simultaneous_same_payment_is_idempotent(pg_engine):
 def test_postgres_two_receipt_attempts_only_call_provider_once(pg_engine,monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-    Base.metadata.create_all(pg_engine,tables=[BillingPayment.__table__,PaymentReceipt.__table__,PaymentAct.__table__])
+    Base.metadata.create_all(pg_engine,tables=[BillingPayment.__table__,PaymentReceipt.__table__,PaymentAct.__table__,BillingCancellation.__table__,CancellationAct.__table__])
     with sessionmaker(bind=pg_engine)() as db:
         seed(db); item=record(db)
     entered,release=Event(),Event()

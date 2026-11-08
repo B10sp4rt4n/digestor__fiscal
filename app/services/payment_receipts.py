@@ -110,7 +110,8 @@ def verify_payments(rows, snapshot):
 def append_act(db, payment, receipt, ctx, action, before, evidence=None):
     transitions = {'registered': ({'absent'}, {'not_sent'}), 'reserved': ({'not_sent','rejected'}, {'processing'}),
         'prepared': ({'processing'}, {'processing'}), 'not_called': ({'processing'}, {'not_sent'}),
-        'unknown': ({'processing'}, {'unknown'}), 'confirmed': ({'processing'}, {'stamped'}), 'rejected': ({'processing'}, {'rejected'})}
+        'unknown': ({'processing'}, {'unknown'}), 'confirmed': ({'processing'}, {'stamped'}), 'rejected': ({'processing'}, {'rejected'}),
+        'recovered': ({'processing', 'unknown'}, {'stamped'})}
     old, new = transitions[action]
     if before not in old or receipt.status not in new: fail('Transición de complemento no permitida', 409)
     rows = db.query(PaymentAct).filter_by(company_id=payment.company_id, payment_id=payment.id).order_by(PaymentAct.sequence).all()

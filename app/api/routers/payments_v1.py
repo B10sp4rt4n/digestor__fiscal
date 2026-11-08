@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.core.auth import SecurityContext, role_guard
 from app.core.config import settings
-from app.core.fiscal_sandbox import ppd_transport_is_sandbox
+from app.core.fiscal_sandbox import ppd_transport_is_sandbox, rest_transport_is_sandbox
 from app.db.session import get_db
 from app.models.commercial import BillingDraft
 from app.models.billing_payment import BillingPayment, PaymentReceipt
@@ -18,6 +18,8 @@ from app.services import payment_receipts as service, timbracfdi_client as pac
 from app.services.fiscal_acts import digest
 from app.services.rep_validation import validate as validate_rep
 from app.services.timbracfdi_client import TimbraCFDIConfigurationError
+from app.services import billing_cancellations as cancellations
+from app.schemas.billing_cancellation import RecoverReceipt
 
 router = APIRouter(prefix='/v1/billing/drafts', tags=['payments-v1'])
 read_roles = role_guard('viewer','operator','admin','superadmin')
@@ -45,7 +47,7 @@ def payment_view(payment,receipt):
         'amount':f'{payment.amount:.2f}','paid_at':payment.paid_at.isoformat()+'Z','payment_form':payment.payment_form,
         'balance_before':f'{payment.balance_before:.2f}','balance_after':f'{payment.balance_after:.2f}',
         'receipt_status':receipt.status,'receipt_uuid':receipt.uuid,'xml_base64':receipt.xml_base64,
-        'bank_verification':'not_performed'}
+        'bank_verification':'not_performed', 'cancellation_status':getattr(receipt, '_cancellation_status', 'not_requested')}
 
 
 def get_payment(db,draft, payment_id,lock=False):
@@ -55,6 +57,8 @@ def get_payment(db,draft, payment_id,lock=False):
     if lock: query = query.with_for_update()
     receipt = query.first()
     if not receipt: raise HTTPException(status_code=409,detail='Pago sin estado de complemento; requiere revisión')
+    row = cancellations.find(db, draft, payment_id)
+    receipt._cancellation_status = row.status if row else 'not_requested'
     return payment,receipt
 
 
@@ -71,12 +75,14 @@ def list_payments(draft_id: str, ctx: SecurityContext=Depends(read_roles), db: S
         result.append(payment_view(payment,receipt))
     return {'supported':True, 'currency':'MXN','invoice_uuid':snapshot['uuid'],'total':snapshot['total'],
         'paid':f'{Decimal(snapshot["total"])-balance:.2f}','balance':f'{balance:.2f}',
-        'receipt_stamp_enabled':settings.FISCAL_REP_STAMP_ENABLED, 'payments':result}
+        'receipt_stamp_enabled':settings.FISCAL_REP_STAMP_ENABLED,
+        'invoice_cancellation_status':cancellations.view(cancellations.find(db, draft))['status'], 'payments':result}
 
 
 @router.post('/{draft_id}/payments',status_code=201)
 def register_payment(draft_id: str, body: RegisterPayment, ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
     enabled(); draft = get_draft(db,draft_id,ctx,lock=True)
+    cancellations.assert_invoice_active(db, draft)
     try:
         payment = service.register(db,draft,body,ctx)
         receipt = db.query(PaymentReceipt).filter_by(company_id=draft.company_id,payment_id=payment.id).one()
@@ -97,6 +103,7 @@ def read_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(read
 @router.post('/{draft_id}/payments/{payment_id}/receipt/prepare')
 def prepare_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
     enabled(); draft = get_draft(db,draft_id,ctx,lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
     snap = service.invoice_snapshot(draft)
     rows = db.query(BillingPayment).filter_by(company_id=draft.company_id,draft_id=draft.id).order_by(BillingPayment.sequence).all()
     service.verify_payments(rows,snap)
@@ -115,6 +122,7 @@ def stamp_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(wri
     if not settings.FISCAL_REP_STAMP_ENABLED:
         raise HTTPException(status_code=503,detail='Timbrado REP sandbox deshabilitado')
     draft = get_draft(db,draft_id,ctx,lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
     snap = service.invoice_snapshot(draft)
     rows = db.query(BillingPayment).filter_by(company_id=draft.company_id,draft_id=draft.id).order_by(BillingPayment.sequence).all()
     service.verify_payments(rows,snap)
@@ -123,6 +131,7 @@ def stamp_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(wri
         raise HTTPException(status_code=409,detail='Complemento emitido o pendiente de conciliación; no repetir')
     # Keep fiscal partiality order even if several collections were declared.
     for prior in rows[:payment.sequence-1]:
+        cancellations.assert_receipt_active(db, draft, prior.id)
         _, previous_receipt = get_payment(db,draft,prior.id)
         if previous_receipt.status != 'stamped':
             raise HTTPException(status_code=409,detail='Primero concilia o timbra el complemento de la parcialidad anterior')
@@ -165,3 +174,52 @@ def stamp_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(wri
     db.commit()
     if receipt.status=='unknown': raise HTTPException(status_code=502,detail='PAC no confirmó el complemento esperado; requiere conciliación')
     return {'ok':receipt.status=='stamped',**payment_view(payment,receipt)}
+
+
+@router.post('/{draft_id}/payments/{payment_id}/receipt/reconcile')
+def recover_receipt(draft_id: str, payment_id: str, body: RecoverReceipt,
+                    ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
+    """Retrieve a provider-issued UUID supplied by the operator, never re-stamp."""
+    enabled()
+    if not rest_transport_is_sandbox():
+        raise HTTPException(status_code=503, detail='Recuperación limitada al destino REST sandbox')
+    draft = get_draft(db, draft_id, ctx, lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
+    payment, receipt = get_payment(db, draft, payment_id, lock=True)
+    if receipt.status == 'stamped':
+        if (receipt.uuid or '').lower() != str(body.receipt_uuid):
+            raise HTTPException(status_code=409, detail='El complemento ya tiene otro UUID confirmado')
+        return payment_view(payment, receipt)
+    if receipt.status not in {'processing', 'unknown'} or not receipt.request_xml:
+        raise HTTPException(status_code=409, detail='Sólo se recuperan solicitudes con resultado incierto')
+    request_xml, emitter = receipt.request_xml, draft.emitter_rfc
+    db.commit()
+    try: result = pac.retrieve_cfdi(emitter, str(body.receipt_uuid))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail='No se pudo recuperar el XML; no se volvió a timbrar') from exc
+    info = pac.extract_stamped_document(result)
+    if (not info['success'] or not service.validate_returned_xml(request_xml, info['stamped_xml'])
+            or (pac.extract_stamp_uuid(info['stamped_xml']) or '').lower() != str(body.receipt_uuid)):
+        raise HTTPException(status_code=409, detail='El proveedor no devolvió el complemento exacto solicitado')
+    draft = get_draft(db, draft_id, ctx, lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
+    payment, receipt = get_payment(db, draft, payment_id, lock=True)
+    db.refresh(receipt)
+    if receipt.status == 'stamped':
+        if (receipt.uuid or '').lower() != str(body.receipt_uuid):
+            raise HTTPException(status_code=409, detail='Otro UUID fue confirmado durante la consulta')
+        return payment_view(payment, receipt)
+    if receipt.status not in {'processing', 'unknown'} or receipt.request_xml != request_xml:
+        raise HTTPException(status_code=409, detail='La solicitud cambió durante la recuperación')
+    snap = service.invoice_snapshot(draft)
+    rows = db.query(BillingPayment).filter_by(company_id=draft.company_id, draft_id=draft.id).order_by(BillingPayment.sequence).all()
+    service.verify_payments(rows, snap)
+    before = receipt.status
+    receipt.status = 'stamped'; receipt.uuid = str(body.receipt_uuid)
+    receipt.xml_base64 = base64.b64encode(info['stamped_xml'].encode()).decode()
+    receipt.stamped_at = datetime.utcnow()
+    receipt.provider_response = json.dumps(result.get('provider_response'), ensure_ascii=False)
+    service.append_act(db, payment, receipt, ctx, 'recovered', before,
+        {'request_xml_sha256': digest(request_xml), 'result_xml_sha256': digest(info['stamped_xml'])})
+    db.commit()
+    return payment_view(payment, receipt)

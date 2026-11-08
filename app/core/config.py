@@ -3,6 +3,11 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Explicit production pilot, pinned to one previously reviewed source XML.
+    LIVE_CANCEL_ENABLED: bool = False
+    LIVE_CANCEL_DRAFT_ID: str = ''
+    LIVE_CANCEL_UUID: str = ''
+    LIVE_CANCEL_XML_SHA256: str = ''
     DB_URL: str = "sqlite:///./local.db"
     DATABASE_URL: Optional[str] = None
     USE_SQLITE: bool = False

@@ -7,20 +7,22 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.core.auth import SecurityContext
 from app.core.config import settings
-from app.core.fiscal_sandbox import rest_transport_is_sandbox, ppd_transport_is_sandbox
+from app.core.fiscal_sandbox import fiscal_operation_allowed, fiscal_operation_is_production
 from app.db.session import get_db
 from app.api.routers.payments_v1 import get_draft, read_roles, write_roles
 from app.api.routers import cancellations_v1
 from app.schemas.fiscal_revision import CreateFiscalRevision
 from app.schemas.billing_cancellation import RecoverReceipt, CancelDocument
-from app.services import fiscal_revisions as svc, timbracfdi_client as pac
+from app.services import fiscal_revisions as svc, timbracfdi_client as pac, fiscal_production as production
 
 router = APIRouter(prefix='/v1/billing/drafts', tags=['fiscal-revisions-v1'])
 
 
 def enabled():
-    if not settings.FISCAL_CORRECTIONS_ENABLED or not rest_transport_is_sandbox() or not ppd_transport_is_sandbox():
-        raise HTTPException(status_code=503, detail='Correcciones limitadas a sandbox y deshabilitadas por defecto')
+    if not settings.FISCAL_CORRECTIONS_ENABLED or not fiscal_operation_allowed('correction'):
+        raise HTTPException(status_code=503, detail='Transporte de sustitución no autorizado')
+    if fiscal_operation_is_production('correction') and (not settings.FISCAL_CANCELLATION_ENABLED or not fiscal_operation_is_production('cancellation')):
+        raise HTTPException(status_code=503, detail='Habilita cancelación productiva antes de sustituir')
 
 
 def latest(db, draft, payment_id):
@@ -31,13 +33,30 @@ def latest(db, draft, payment_id):
 
 def action(draft_id, operation, body, ctx, db, payment_id=None):
     if operation != 'read': enabled()
-    draft = get_draft(db, draft_id, ctx, lock=True)
+    live_mode = fiscal_operation_is_production('correction')
+    draft = get_draft(db, draft_id, ctx, lock=not live_mode)
+    production.scope('correction',draft,ctx,mutate=operation != 'read')
+    if live_mode and operation in {'create','stamp'}:
+        xml, _, _ = svc.context(db,draft,payment_id)
+        folio = pac.extract_stamp_uuid(xml).lower()
+        if not payment_id and production.legacy(db,draft,folio,ctx): svc.fail('El comprobante ya tiene cancelación productiva registrada')
+        db.commit()
+        production.sat(svc.parse(xml),folio,cancelable=True)
+        draft = get_draft(db,draft_id,ctx,lock=True)
+        if svc.context(db,draft,payment_id)[0] != xml: svc.fail('Cambió el comprobante durante la consulta SAT')
+    elif live_mode:
+        draft = get_draft(db,draft_id,ctx,lock=True)
     if operation == 'create':
         try: svc.create(db, draft, body, ctx, payment_id); db.commit()
         except IntegrityError as exc:
             db.rollback(); raise HTTPException(status_code=409, detail='Otra solicitud registró la sustitución; consulta su estado') from exc
         return svc.view(db, draft, payment_id)
-    if operation == 'read': return svc.view(db, draft, payment_id)
+    if operation == 'read':
+        value = svc.view(db,draft,payment_id)
+        old = production.legacy(db,draft,value['active_uuid'],ctx) if live_mode and not payment_id else None
+        cancelled = svc.cancellation(db,draft,value['active_uuid'])
+        return {**value, 'can_correct':not old and cancelled is None}
+
     row = latest(db, draft, payment_id)
     if operation == 'abandon':
         if row.status not in {'prepared', 'rejected'} or row.result_xml or row.result_uuid:

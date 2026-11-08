@@ -12,8 +12,21 @@ from app.services import production_cancellation as live, billing_cancellations 
 from app.models.billing_cancellation import BillingCancellation
 from app.models.billing_payment import BillingPayment
 from test_payment_cycle import db, CTX as BASE_CTX, body
-from test_billing_cancellations import cancel_body
+from test_billing_cancellations import cancel_body as sandbox_cancel_body
 from test_fiscal_revisions import seed_valid, request as revision_body, accepted
+
+def cancel_body(db,invoice,payment_id=None,**changes):
+    return sandbox_cancel_body(expected_uuid=svc.target(db,invoice,payment_id)[1],**changes)
+
+
+def act(db,invoice,operation,payload=None):
+    from app.models.fiscal_revision import FiscalRevision
+    from app.schemas.fiscal_revision import RevisionOperation
+    from app.schemas.billing_cancellation import RecoverReceipt
+    if operation not in {'create','read'}:
+        revision=db.query(FiscalRevision).filter_by(draft_id=invoice.id).one()
+        payload=RecoverReceipt(receipt_uuid=payload.receipt_uuid,revision_id=revision.id) if operation=='reconcile' else RevisionOperation(revision_id=revision.id)
+    return correction.action(invoice.id,operation,payload,CTX,db)
 
 CTX=SecurityContext(BASE_CTX.tenant_id,'synthetic-admin','admin')
 VIGENTE={'CodigoEstatus':'S - Synthetic','Estado':'Vigente','EsCancelable':'Cancelable con aceptación','EstatusCancelacion':''}
@@ -40,7 +53,7 @@ def wire(monkeypatch):
 
 
 def test_ack_with_acceptance_waits_and_repeated_click_never_resends(db,monkeypatch):
-    invoice=seed_valid(db); original=invoice.stamped_xml_base64;pac=wire(monkeypatch);payload=cancel_body()
+    invoice=seed_valid(db); original=invoice.stamped_xml_base64;pac=wire(monkeypatch);payload=cancel_body(db,invoice)
     first=cancel.cancel_invoice(invoice.id,payload,CTX,db)
     assert first['status']=='requested' and first['environment']=='production'
     assert cancel.cancel_invoice(invoice.id,payload,CTX,db)['status']=='requested' and pac.call_count==1
@@ -53,7 +66,7 @@ def test_ack_with_acceptance_waits_and_repeated_click_never_resends(db,monkeypat
 
 
 def test_response_lost_and_rejection_do_not_resubmit(db,monkeypatch):
-    invoice=seed_valid(db);pac=Mock(side_effect=TimeoutError());monkeypatch.setattr(live,'cancel_at_pac',pac);payload=cancel_body()
+    invoice=seed_valid(db);pac=Mock(side_effect=TimeoutError());monkeypatch.setattr(live,'cancel_at_pac',pac);payload=cancel_body(db,invoice)
     assert cancel.cancel_invoice(invoice.id,payload,CTX,db)['status']=='unknown'
     assert cancel.cancel_invoice(invoice.id,payload,CTX,db)['status']=='unknown' and pac.call_count==1
     live.sat_status.return_value={**VIGENTE,'EstatusCancelacion':'Solicitud rechazada'}
@@ -63,19 +76,19 @@ def test_response_lost_and_rejection_do_not_resubmit(db,monkeypatch):
 @pytest.mark.parametrize('state',[{**VIGENTE,'EsCancelable':'No cancelable'},CANCELLED])
 def test_ineligible_sat_result_does_not_reserve_or_call_pac(db,monkeypatch,state):
     invoice=seed_valid(db);pac=wire(monkeypatch);live.sat_status.return_value=state
-    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(),CTX,db)
+    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(db,invoice),CTX,db)
     assert db.query(BillingCancellation).count()==0;pac.assert_not_called()
 
 
 def test_sat_timeout_has_no_reservation(db,monkeypatch):
     invoice=seed_valid(db);pac=wire(monkeypatch);live.sat_status.side_effect=TimeoutError()
-    with pytest.raises(HTTPException) as exc: cancel.cancel_invoice(invoice.id,cancel_body(),CTX,db)
+    with pytest.raises(HTTPException) as exc: cancel.cancel_invoice(invoice.id,cancel_body(db,invoice),CTX,db)
     assert exc.value.status_code==502 and db.query(BillingCancellation).count()==0;pac.assert_not_called()
 
 @pytest.mark.parametrize('ctx',[SecurityContext(BASE_CTX.tenant_id,'seller','operator'),SecurityContext('other','admin','admin')])
 def test_role_and_tenant_do_not_reach_sat_or_pac(db,monkeypatch,ctx):
     invoice=seed_valid(db);pac=wire(monkeypatch)
-    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(),ctx,db)
+    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(db,invoice),ctx,db)
     live.sat_status.assert_not_called();pac.assert_not_called()
 
 @pytest.mark.parametrize('key,value',[('FISCAL_CANCELLATION_PRODUCTION_ENABLED',False),
@@ -83,24 +96,24 @@ def test_role_and_tenant_do_not_reach_sat_or_pac(db,monkeypatch,ctx):
     ('TIMBRACFDI_SOAP_URL','https://foreign.test/Timbrado.asmx')])
 def test_production_scope_fails_closed(db,monkeypatch,key,value):
     invoice=seed_valid(db);pac=wire(monkeypatch);monkeypatch.setattr(settings,key,value)
-    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(),CTX,db)
+    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(db,invoice),CTX,db)
     pac.assert_not_called();live.sat_status.assert_not_called()
 
 
 def test_substitution_pending_rejection_recovery_and_cancel_chain(db,monkeypatch):
     invoice=seed_valid(db);original=invoice.stamped_xml_base64;pac=wire(monkeypatch)
-    prepared=correction.action(invoice.id,'create',revision_body(db),CTX,db)
+    prepared=act(db,invoice,'create',revision_body(db))
     assert prepared['environment']=='production' and prepared['pending']
     signer=Mock(side_effect=accepted);monkeypatch.setattr(correction.pac,'timbra_cfdi',signer)
-    issued=correction.action(invoice.id,'stamp',None,CTX,db)
+    issued=act(db,invoice,'stamp',None)
     new_uuid=issued['history'][0]['result_uuid']
     assert issued['active_uuid']!=new_uuid
-    requested=correction.action(invoice.id,'cancel-original',None,CTX,db)
+    requested=act(db,invoice,'cancel-original',None)
     assert requested['pending'] and pac.call_args.args[2:] == ('01',new_uuid)
     live.sat_status.return_value={**VIGENTE,'EstatusCancelacion':'En proceso'}
-    assert correction.action(invoice.id,'confirm-cancellation',None,CTX,db)['pending']
+    assert act(db,invoice,'confirm-cancellation',None)['pending']
     live.sat_status.return_value=CANCELLED
-    confirmed=correction.action(invoice.id,'confirm-cancellation',None,CTX,db)
+    confirmed=act(db,invoice,'confirm-cancellation',None)
     assert not confirmed['pending'] and confirmed['active_uuid']==new_uuid
     assert invoice.stamped_xml_base64==original and db.query(BillingPayment).count()==0
     assert signer.call_count==1 and pac.call_count==1
@@ -117,8 +130,8 @@ def test_legacy_cancelled_pilot_cannot_be_cancelled_or_replaced_again(db,monkeyp
     before=invoice.stamped_xml_base64
     monkeypatch.setattr(settings,'LIVE_CANCEL_ENABLED',False)
     assert cancel.read_invoice(invoice.id,CTX,db)['status']=='cancelled'
-    assert cancel.cancel_invoice(invoice.id,cancel_body(),CTX,db)['status']=='cancelled'
-    with pytest.raises(HTTPException): correction.action(invoice.id,'create',revision_body(db),CTX,db)
+    assert cancel.cancel_invoice(invoice.id,cancel_body(db,invoice),CTX,db)['status']=='cancelled'
+    with pytest.raises(HTTPException): act(db,invoice,'create',revision_body(db))
     assert invoice.stamped_xml_base64==before and pac.call_count==1 and db.query(BillingCancellation).count()==0
 
 
@@ -128,9 +141,9 @@ def test_rep_cancel_preserves_cash_and_respects_reverse_partiality(db,monkeypatc
     for _ in range(2):
         item=payments.register_payment(invoice.id,body('58'),CTX,db)
         payments.stamp_receipt(invoice.id,item['id'],CTX,db);ids.append(item['id'])
-    with pytest.raises(HTTPException): cancel.cancel_receipt(invoice.id,ids[0],cancel_body(),CTX,db)
+    with pytest.raises(HTTPException): cancel.cancel_receipt(invoice.id,ids[0],cancel_body(db,invoice,ids[0]),CTX,db)
     pac.assert_not_called()
-    assert cancel.cancel_receipt(invoice.id,ids[1],cancel_body(),CTX,db)['status']=='requested'
+    assert cancel.cancel_receipt(invoice.id,ids[1],cancel_body(db,invoice,ids[1]),CTX,db)['status']=='requested'
     live.sat_status.return_value=CANCELLED
     assert cancel.reconcile_receipt(invoice.id,ids[1],CTX,db)['status']=='cancelled'
     assert db.query(BillingPayment).count()==2
@@ -140,20 +153,20 @@ def test_rep_cancel_preserves_cash_and_respects_reverse_partiality(db,monkeypatc
 def test_unknown_substitution_recovers_without_reissue(db,monkeypatch):
     from app.models.fiscal_revision import FiscalRevision
     from app.schemas.billing_cancellation import RecoverReceipt
-    invoice=seed_valid(db);correction.action(invoice.id,'create',revision_body(db),CTX,db)
+    invoice=seed_valid(db);act(db,invoice,'create',revision_body(db))
     signer=Mock(side_effect=TimeoutError());monkeypatch.setattr(correction.pac,'timbra_cfdi',signer)
-    assert correction.action(invoice.id,'stamp',None,CTX,db)['history'][0]['status']=='unknown'
-    with pytest.raises(HTTPException):correction.action(invoice.id,'stamp',None,CTX,db)
+    assert act(db,invoice,'stamp',None)['history'][0]['status']=='unknown'
+    with pytest.raises(HTTPException):act(db,invoice,'stamp',None)
     row=db.query(FiscalRevision).one();result=accepted(xml_base64=base64.b64encode(row.request_xml.encode()).decode())
     folio=payments.pac.extract_stamp_uuid(result['provider_response']['Xml'])
     retrieve=Mock(return_value=result);monkeypatch.setattr(correction.pac,'retrieve_cfdi',retrieve)
-    recovered=correction.action(invoice.id,'reconcile',RecoverReceipt(receipt_uuid=folio),CTX,db)
+    recovered=act(db,invoice,'reconcile',RecoverReceipt(receipt_uuid=folio))
     assert recovered['history'][0]['result_uuid']==folio and signer.call_count==1 and retrieve.call_count==1
 
 @pytest.mark.parametrize('key,value',[('AUTH_CONNECTOR','none'),('AUTH_ALLOW_ANONYMOUS',True)])
 def test_production_requires_jwt_and_no_anonymous(db,monkeypatch,key,value):
     invoice=seed_valid(db);monkeypatch.setattr(settings,key,value)
-    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(),CTX,db)
+    with pytest.raises(HTTPException): cancel.cancel_invoice(invoice.id,cancel_body(db,invoice),CTX,db)
     live.sat_status.assert_not_called()
 
 from test_billing_stamp_integration import pg_engine
@@ -164,8 +177,9 @@ def test_production_concurrent_clicks_reserve_before_external_call(pg_engine,mon
     from sqlalchemy.orm import sessionmaker
     from scripts.install_fiscal_cycle import install
     install(pg_engine)
-    with sessionmaker(bind=pg_engine)() as db:invoice_id=seed_valid(db).id
-    entered,release=Event(),Event();payload=cancel_body()
+    with sessionmaker(bind=pg_engine)() as db:
+        invoice=seed_valid(db);invoice_id=invoice.id;folio=svc.target(db,invoice)[1]
+    entered,release=Event(),Event();payload=sandbox_cancel_body(expected_uuid=folio)
     def external(emitter,folio,*_):
         entered.set();assert release.wait(10)
         return 200,f'<Acuse RfcEmisor="{emitter}"><Folios><UUID>{folio}</UUID><EstatusUUID>201</EstatusUUID></Folios></Acuse>'
@@ -179,4 +193,28 @@ def test_production_concurrent_clicks_reserve_before_external_call(pg_engine,mon
             assert call()['status']=='processing'
         finally:release.set()
         assert first.result(10)['status']=='requested'
+    assert pac.call_count==1
+
+@pytest.mark.parametrize('expected',[None,str(uuid4())])
+def test_missing_or_stale_confirmation_never_calls_pac(db,monkeypatch,expected):
+    invoice=seed_valid(db);pac=wire(monkeypatch)
+    with pytest.raises(HTTPException) as exc: cancel.cancel_invoice(invoice.id,sandbox_cancel_body(expected_uuid=expected),CTX,db)
+    assert exc.value.status_code==422 and db.query(BillingCancellation).count()==0
+    pac.assert_not_called();live.sat_status.assert_not_called()
+
+
+def test_http_revision_action_requires_exact_reviewed_revision(db,monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.db.session import get_db
+    invoice=seed_valid(db);prepared=act(db,invoice,'create',revision_body(db));rid=prepared['history'][0]['id']
+    pac=Mock(side_effect=accepted);monkeypatch.setattr(correction.pac,'timbra_cfdi',pac)
+    app=FastAPI();app.include_router(correction.router)
+    app.dependency_overrides[get_db]=lambda:db;app.dependency_overrides[correction.write_roles]=lambda:CTX
+    with TestClient(app) as client:
+        url=f'/v1/billing/drafts/{invoice.id}/correction/stamp'
+        assert client.post(url,json={'revision_id':str(uuid4())}).status_code==422
+        pac.assert_not_called()
+        response=client.post(url,json={'revision_id':rid})
+        assert response.status_code==200 and response.json()['history'][0]['status']=='stamped'
     assert pac.call_count==1

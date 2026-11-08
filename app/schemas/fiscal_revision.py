@@ -25,3 +25,8 @@ class CreateFiscalRevision(BaseModel):
     def actual_changes(self):
         if not self.changes.model_dump(exclude_none=True): raise ValueError('Indica al menos un dato a corregir')
         return self
+
+
+class RevisionOperation(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision_id: UUID

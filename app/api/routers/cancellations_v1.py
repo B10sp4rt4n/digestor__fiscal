@@ -32,7 +32,7 @@ def read(draft_id, ctx, db, payment_id=None):
     production.scope('cancellation',draft,ctx)
     _, folio, _ = service.target(db,draft,payment_id)
     old = production.legacy(db,draft,folio,ctx) if not payment_id else None
-    return present(old or service.view(service.find(db, draft, payment_id)))
+    return present({'document_uuid':folio, **(old or service.view(service.find(db, draft, payment_id)))})
 
 
 def request(draft_id, body, ctx, db, payment_id=None, source=None):
@@ -40,6 +40,8 @@ def request(draft_id, body, ctx, db, payment_id=None, source=None):
     draft = get_draft(db,draft_id,ctx,lock=not live_mode)
     production.scope('cancellation',draft,ctx,mutate=True)
     checked_source = source or service.target(db,draft,payment_id)
+    if live_mode and (body.expected_uuid is None or str(body.expected_uuid) != checked_source[1]):
+        service.fail('El UUID confirmado cambió; recarga el comprobante', 422)
     old = production.legacy(db,draft,checked_source[1],ctx) if not payment_id else None
     if old: return present(old)
     existing = service.find(db,draft,payment_id,document_uuid=checked_source[1])

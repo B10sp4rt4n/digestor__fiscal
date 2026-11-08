@@ -1,0 +1,325 @@
+{
+  "date_cdmx": "2026-11-07",
+  "provider": "ProFact TimbraCFDI v2 public QA",
+  "host": "pruebas.timbracfdi33.mx:1444",
+  "live_provider_calls": true,
+  "private_credentials_used": false,
+  "customer_data_used": false,
+  "production_changed": false,
+  "cryptographic_signature_verified": false,
+  "result": "partial_acceptance_cancellation_blocked",
+  "runs": [
+    {
+      "name": "pac-public-pilot-02",
+      "invoice_uuid": null,
+      "result": "stopped",
+      "steps": [
+        {
+          "name": "invoice_unsigned_xsd",
+          "passed": true
+        },
+        {
+          "name": "invoice_pac_accepted",
+          "passed": false
+        }
+      ],
+      "requests": [
+        {
+          "operation": "TimbraCFDI",
+          "outcome": "response",
+          "http_status": 500,
+          "response_sha256": "ddaedea0d46f2da77e21442456752458f62eed37e36e0ab3571bc045162f2be9"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "detail": "invoice_pac_accepted"
+      },
+      "evidence_files": [
+        {
+          "name": "01-request.json",
+          "sha256": "b6580d330c2a8198a876ba23059996dc32be07a083f354ff5af45bd52a439dbc"
+        },
+        {
+          "name": "01-response.json",
+          "sha256": "d5e7ed8e8af3900ed98b1d139c0cbe6eaec8b3ae27400e4a9b87919f3b2d6913"
+        },
+        {
+          "name": "report.json",
+          "sha256": "7bb77d3ff08638851e1c962207e539a8fd56a27b87b9d9cd39486e367b3d240f"
+        }
+      ]
+    },
+    {
+      "name": "pac-public-pilot-03",
+      "invoice_uuid": "19f702bc-c193-4a30-baff-b5cdffe0f69d",
+      "result": "stopped",
+      "steps": [
+        {
+          "name": "invoice_unsigned_xsd",
+          "passed": true
+        },
+        {
+          "name": "invoice_pac_accepted",
+          "passed": true
+        },
+        {
+          "name": "invoice_signed_xsd",
+          "passed": true
+        },
+        {
+          "name": "invoice_substitute_issued",
+          "passed": true
+        },
+        {
+          "name": "invoice_substitute_active",
+          "passed": false
+        }
+      ],
+      "requests": [
+        {
+          "operation": "TimbraCFDI",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "f0e1dc1b657618dedf900c3b2b88dd85398288f9d037f91bd4c259df58af5302"
+        },
+        {
+          "operation": "TimbraCFDI",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "d6d0085410cc2c24009369cecc964ff6b7c5962a322c18369474eaee267209f7"
+        },
+        {
+          "operation": "CancelaCFDIAck",
+          "outcome": "response",
+          "http_status": 500,
+          "response_sha256": "764e3d6a922809f0f71f58ada005e36a55654e9b27cd91d5a274a25450d644ca"
+        },
+        {
+          "operation": "ConsultaEstatusSat",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "75ba08dbc93b03051fb66a56e89e58f6980b26981de87bfbb6e391e650aeb148"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "detail": "invoice_substitute_active"
+      },
+      "evidence_files": [
+        {
+          "name": "01-request.json",
+          "sha256": "2246072424e6c7872025deceecace67c8683d18e9e0807ecb942e51f09dd5609"
+        },
+        {
+          "name": "01-response.json",
+          "sha256": "e783d285d336dba9e7b5705f693469e7ce583b2e166a314df3cc7aef1998bb3e"
+        },
+        {
+          "name": "02-request.json",
+          "sha256": "adb59d481b416aaafc09909c191d976492e720bb555bd553cd8b434c678deafb"
+        },
+        {
+          "name": "02-response.json",
+          "sha256": "15b46121e13072a58bf157ce68306a962609fee619617a9ac6d75eaa9e3db5b6"
+        },
+        {
+          "name": "03-request.json",
+          "sha256": "375d1d9bfae675f32444d62c41010fc3e5257f02a4b38427c85ecb703c09396e"
+        },
+        {
+          "name": "03-response.json",
+          "sha256": "e22882aa73957d4498690503b315d64c1da08d6b4919de2a37522df0a0acb81c"
+        },
+        {
+          "name": "04-request.json",
+          "sha256": "3877e9b557f7dc967b9598b98df3cea264435ba0d1b4c29eec959bd963caf2bd"
+        },
+        {
+          "name": "04-response.json",
+          "sha256": "e1f5f0065dd0eeb056d51ac9aa42e4b98f55408abce4cffe22cb76d7576ecdf7"
+        },
+        {
+          "name": "invoice.xml.json",
+          "sha256": "84b227e22761081abef55ce73cd0058a502964ce225d109948db3a04b95bc180"
+        },
+        {
+          "name": "report.json",
+          "sha256": "81ebf1e89b9f99029d8311893d509cb9b094666e0067a3983184ef91fead40d4"
+        }
+      ]
+    },
+    {
+      "name": "pac-public-payments-01",
+      "invoice_uuid": "ae46d258-1056-4033-a10a-ef36c3177dd6",
+      "result": "stopped",
+      "steps": [
+        {
+          "name": "invoice_unsigned_xsd",
+          "passed": true
+        },
+        {
+          "name": "invoice_pac_accepted",
+          "passed": true,
+          "provider_code": 0,
+          "provider_message": ""
+        },
+        {
+          "name": "invoice_signed_xsd",
+          "passed": true
+        },
+        {
+          "name": "rep1_issued",
+          "passed": true,
+          "uuid": "6ac16721-3ffe-4c3a-8e0b-5e341b9a3268"
+        },
+        {
+          "name": "rep1_retrieved_without_reissue",
+          "passed": true
+        },
+        {
+          "name": "rep2_issued",
+          "passed": true,
+          "uuid": "0396717b-8a9d-455b-bf80-d5ff2e01b2ce"
+        },
+        {
+          "name": "rep2_retrieved_without_reissue",
+          "passed": true
+        },
+        {
+          "name": "cash_preserved_balance_zero",
+          "passed": true
+        },
+        {
+          "name": "rep2_cancelled",
+          "passed": false
+        }
+      ],
+      "requests": [
+        {
+          "operation": "TimbraCFDI",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "9dcd9c50a80b774e1405d4f3cd5289ecccd1022475b7a2a996387bda6a8c7a5a"
+        },
+        {
+          "operation": "TimbraCFDI",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "3263c94e95093f52e23982138eb13d4e22495192b6e885fb38bc9bb20309347a"
+        },
+        {
+          "operation": "ObtieneCFDI",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "f58e1258db35aff6875c10c5660eaa15d65ef2eec96e27627dc0613bfa6fccc4"
+        },
+        {
+          "operation": "TimbraCFDI",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "1f62cebcc0105a6f1b90f7c92e833f37f0f1c46c5965bb62cc53eb0783e69be6"
+        },
+        {
+          "operation": "ObtieneCFDI",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "3c25ba4abfbdaa50d5e8a78b1bb7c74d3f3ff64119ba1b918b4539bd22ea9e75"
+        },
+        {
+          "operation": "CancelaCFDIAck",
+          "outcome": "response",
+          "http_status": 500,
+          "response_sha256": "1844b03b823788b9b8a31691a704aa7f3268a6c38be2926baa8c24f7e1ad2405"
+        },
+        {
+          "operation": "ConsultaEstatusSat",
+          "outcome": "response",
+          "http_status": 200,
+          "response_sha256": "f5b0153657ef12c5c921216ba945989ce1c973e8d9eb91013ad71308b6076fbc"
+        }
+      ],
+      "error": {
+        "type": "RuntimeError",
+        "detail": "rep2_cancelled"
+      },
+      "evidence_files": [
+        {
+          "name": "01-request.json",
+          "sha256": "22989376ef26271354f313c8e4cfd6efbf0b6a20a1e9c0ca7951fd9133beb2ea"
+        },
+        {
+          "name": "01-response.json",
+          "sha256": "b8de826bd1a6327768d4cdb7d23a71af81a3ed10567ea778b93e52114ee2719a"
+        },
+        {
+          "name": "02-request.json",
+          "sha256": "61763e15736ba44b724ee69543a62772fbe1447eacc54b7b4bf566b75a0d03ed"
+        },
+        {
+          "name": "02-response.json",
+          "sha256": "03be1530cc292d42419183995086879d13e91688a94fbf83b9d3f6abc2f5058d"
+        },
+        {
+          "name": "03-request.json",
+          "sha256": "ff32385180e70f30fc8688ef4604b90dd797ba4a476f17ace3b292e41ef5e87a"
+        },
+        {
+          "name": "03-response.json",
+          "sha256": "992172ce4983db07f06f390d24de30f64c6b32d3e66028648852a80e49429419"
+        },
+        {
+          "name": "04-request.json",
+          "sha256": "8160f9bd202fb563de29de8c5a02520f451314a9d16c451e3462e759bdbd212b"
+        },
+        {
+          "name": "04-response.json",
+          "sha256": "cb5b76a31b8facc38ed33e8555dc2b7c12fb38e3c24cca70321e99ad62a0ff22"
+        },
+        {
+          "name": "05-request.json",
+          "sha256": "3f531feccd219f4abf9b877abae1adb1d36eb015de96e472a702febfda4f4995"
+        },
+        {
+          "name": "05-response.json",
+          "sha256": "3a39c44e0551fb554c7cd2a30b70e9ed6feb40110f6aa6211e04575ae3df44be"
+        },
+        {
+          "name": "06-request.json",
+          "sha256": "30ea5e0152a7f4cfd8089c96e3da73043a47125179ab9a6a9eaddc7b7a5a6bee"
+        },
+        {
+          "name": "06-response.json",
+          "sha256": "2367cf1496f0b62159980b2f2f0ae0b4ba49b29d355196138ebb4da731dd1e82"
+        },
+        {
+          "name": "07-request.json",
+          "sha256": "550cfe3021349d1ed3b065bf6e8e5b79ef60759758fa515103ebf8887172926b"
+        },
+        {
+          "name": "07-response.json",
+          "sha256": "df6bc7702270157a58f23f4ef27fc943d2386b565d59b54805f8d8867cc377f2"
+        },
+        {
+          "name": "invoice.xml.json",
+          "sha256": "a0da11b6fecd63b340111a7e81621f45b73de27cfc4cfc3a0971a5144d4a70d9"
+        },
+        {
+          "name": "report.json",
+          "sha256": "709c0b5b4a8c764d1a7351fdd612ce1bc15d1672fd9aa783919a87395130d251"
+        }
+      ]
+    }
+  ],
+  "offline_evidence_checks": {
+    "rep1_retrieval_exact_business_match": true,
+    "rep2_retrieval_exact_business_match": true
+  },
+  "limits": [
+    "No full normative certification",
+    "No successful live cancellation",
+    "No confirmed activation of replacement",
+    "No browser/Clerk acceptance",
+    "No amount-changing or invoice-with-payments correction"
+  ]
+}

@@ -3,6 +3,14 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Explicit maintenance deployment: deny writes and suppress startup writers.
+    FISCAL_MAINTENANCE_MODE: bool = False
+    FISCAL_PPD_ENABLED: bool = False
+    FISCAL_PPD_PRODUCTION_ENABLED: bool = False
+    FISCAL_PPD_PRODUCTION_EMITTER_RFC: str = ''
+    FISCAL_REP_STAMP_ENABLED: bool = False
+    FISCAL_CANCELLATION_ENABLED: bool = False
+    FISCAL_CORRECTIONS_ENABLED: bool = False
     # Explicit production pilot, pinned to one previously reviewed source XML.
     LIVE_CANCEL_ENABLED: bool = False
     LIVE_CANCEL_DRAFT_ID: str = ''
@@ -155,3 +163,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

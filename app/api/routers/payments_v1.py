@@ -1,0 +1,260 @@
+"""Explicit, tenant-scoped payment declarations and authorized REP lifecycle."""
+import base64
+import json
+from xml.etree import ElementTree as ET
+from datetime import datetime
+from decimal import Decimal
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+from app.core.auth import SecurityContext, role_guard
+from app.core.config import settings
+from app.core.fiscal_sandbox import ppd_transport_is_allowed, ppd_production_configured, rest_transport_is_sandbox
+from app.db.session import get_db
+from app.models.commercial import BillingDraft
+from app.models.billing_payment import BillingPayment, PaymentReceipt
+from app.schemas.billing_payment import RegisterPayment
+from app.services import payment_receipts as service, timbracfdi_client as pac
+from app.services.fiscal_acts import digest
+from app.services.rep_validation import validate as validate_rep
+from app.services.timbracfdi_client import TimbraCFDIConfigurationError
+from app.services import billing_cancellations as cancellations
+from app.schemas.billing_cancellation import RecoverReceipt
+from app.services import fiscal_revisions as revisions
+
+router = APIRouter(prefix='/v1/billing/drafts', tags=['payments-v1'])
+read_roles = role_guard('viewer','operator','admin','superadmin')
+write_roles = role_guard('operator','admin','superadmin')
+
+
+def enabled():
+    if not settings.FISCAL_PPD_ENABLED:
+        raise HTTPException(status_code=503,detail='PPD y pagos aún no están habilitados')
+    if not ppd_transport_is_allowed():
+        raise HTTPException(status_code=503,detail='El transporte de PPD no está autorizado')
+
+
+def get_draft(db, draft_id, ctx, lock=False):
+    query = db.query(BillingDraft).filter_by(id=draft_id,company_id=ctx.tenant_id)
+    if lock: query = query.with_for_update()
+    draft = query.first()
+    if not draft: raise HTTPException(status_code=404,detail='Factura no encontrada')
+    return draft
+
+
+def payment_view(payment,receipt):
+    return {'id':payment.id, 'sequence':payment.sequence, 'reference':payment.reference,
+        'amount':f'{payment.amount:.2f}','paid_at':payment.paid_at.isoformat()+'Z','payment_form':payment.payment_form,
+        'balance_before':f'{payment.balance_before:.2f}','balance_after':f'{payment.balance_after:.2f}',
+        'receipt_status':receipt.status,'receipt_uuid':receipt.uuid,'xml_base64':receipt.xml_base64,
+        'bank_verification':'not_performed', 'cancellation_status':getattr(receipt, '_cancellation_status', 'not_requested'),
+        'fiscal_ready':getattr(receipt, '_fiscal_ready', receipt.status == 'stamped'),
+        'has_active_revision':getattr(receipt, '_has_active_revision', False)}
+
+
+def get_payment(db,draft, payment_id,lock=False):
+    payment = db.query(BillingPayment).filter_by(id=payment_id,company_id=draft.company_id,draft_id=draft.id).first()
+    if not payment: raise HTTPException(status_code=404,detail='Pago no encontrado')
+    query = db.query(PaymentReceipt).filter_by(payment_id=payment.id,company_id=draft.company_id)
+    if lock: query = query.with_for_update()
+    receipt = query.first()
+    if not receipt: raise HTTPException(status_code=409,detail='Pago sin estado de complemento; requiere revisión')
+    row = cancellations.find(db, draft, payment_id)
+    original_cancel = cancellations.find(db, draft, payment_id, document_uuid=receipt.uuid.lower()) if receipt.uuid else None
+    receipt._cancellation_status = original_cancel.status if original_cancel else 'not_requested'
+    effective_xml, pending, history = revisions.context(db, draft, payment_id) if receipt.status == 'stamped' else (None, None, [])
+    receipt._fiscal_ready = receipt.status == 'stamped' and pending is None and (not row or row.status not in cancellations.BLOCKING)
+    receipt._has_active_revision = bool(history) and effective_xml != base64.b64decode(receipt.xml_base64).decode() if receipt.xml_base64 else False
+    return payment,receipt
+
+
+def get_money_draft(db, draft_id, ctx, lock=False):
+    draft = revisions.payment_draft(db, get_draft(db, draft_id, ctx, lock=lock))
+    if not ppd_transport_is_allowed(draft.emitter_rfc):
+        raise HTTPException(status_code=403,detail='Emisor no habilitado para PPD productivo')
+    return draft
+
+
+def production_preflight(db, draft_id, ctx):
+    if not ppd_production_configured(): return
+    draft = get_money_draft(db,draft_id,ctx)
+    snapshot = service.invoice_snapshot(draft)
+    root = ET.fromstring(base64.b64decode(draft.stamped_xml_base64).decode())
+    db.commit()  # No row lock or DB transaction while consulting the SAT.
+    from app.services.production_cancellation import sat_status
+    try: result = sat_status(root,snapshot['uuid'])
+    except HTTPException: raise
+    except Exception as exc:
+        raise HTTPException(status_code=502,detail='SAT sin confirmar; no se registró ni timbró el pago') from exc
+    if result['Estado'] != 'Vigente':
+        raise HTTPException(status_code=409,detail='La factura no está vigente ante el SAT')
+
+
+@router.get('/{draft_id}/payments')
+def list_payments(draft_id: str, ctx: SecurityContext=Depends(read_roles), db: Session=Depends(get_db)):
+    enabled(); draft = get_money_draft(db,draft_id,ctx)
+    if draft.payment_method != 'PPD': return {'supported':False,'reason':'Esta factura no es PPD','payments':[]}
+    snapshot = service.invoice_snapshot(draft)
+    rows = db.query(BillingPayment).filter_by(company_id=draft.company_id,draft_id=draft.id).order_by(BillingPayment.sequence).all()
+    balance,_,_ = service.verify_payments(rows,snapshot)
+    result = []
+    for payment in rows:
+        _, receipt = get_payment(db,draft,payment.id)
+        result.append(payment_view(payment,receipt))
+    return {'supported':True, 'environment':settings.timbracfdi_environment, 'currency':'MXN','invoice_uuid':snapshot['uuid'],'total':snapshot['total'],
+        'paid':f'{Decimal(snapshot["total"])-balance:.2f}','balance':f'{balance:.2f}',
+        'receipt_stamp_enabled':settings.FISCAL_REP_STAMP_ENABLED,
+        'invoice_fiscal_ready':revisions.context(db, draft)[1] is None and not (
+            (current_cancel := cancellations.find(db, draft)) and current_cancel.status in cancellations.BLOCKING),
+        'invoice_cancellation_status':cancellations.view(cancellations.find(db, draft))['status'], 'payments':result}
+
+
+@router.post('/{draft_id}/payments',status_code=201)
+def register_payment(draft_id: str, body: RegisterPayment, ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
+    enabled(); production_preflight(db,draft_id,ctx)
+    draft = get_money_draft(db,draft_id,ctx,lock=True)
+    cancellations.assert_invoice_active(db, draft)
+    try:
+        payment = service.register(db,draft,body,ctx)
+        receipt = db.query(PaymentReceipt).filter_by(company_id=draft.company_id,payment_id=payment.id).one()
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409,detail='La referencia o clave de pago ya está registrada; consulta el saldo') from exc
+    return payment_view(payment,receipt)
+
+
+@router.get('/{draft_id}/payments/{payment_id}/receipt')
+def read_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(read_roles), db: Session=Depends(get_db)):
+    enabled(); draft = get_money_draft(db,draft_id,ctx)
+    payment,receipt = get_payment(db,draft,payment_id)
+    return payment_view(payment,receipt)
+
+
+@router.post('/{draft_id}/payments/{payment_id}/receipt/prepare')
+def prepare_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
+    enabled(); draft = get_money_draft(db,draft_id,ctx,lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
+    snap = service.invoice_snapshot(draft)
+    rows = db.query(BillingPayment).filter_by(company_id=draft.company_id,draft_id=draft.id).order_by(BillingPayment.sequence).all()
+    service.verify_payments(rows,snap)
+    payment,receipt = get_payment(db,draft,payment_id,lock=True)
+    # Preview never changes an issued or pending request and never calls PAC.
+    xml = receipt.request_xml or service.build_xml(payment)
+    validation = validate_rep(xml)
+    if not validation['valid']: raise HTTPException(status_code=422,detail={'message':'XML preliminar no válido para el perfil REP','validation':validation})
+    return {'preliminary':True,'validation':validation,'xml_base64':base64.b64encode(xml.encode()).decode(), 'request_xml_sha256':digest(xml),
+        'receipt_status':receipt.status,'bank_verification':'not_performed'}
+
+
+@router.post('/{draft_id}/payments/{payment_id}/receipt/stamp')
+def stamp_receipt(draft_id: str,payment_id: str,ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
+    enabled()
+    if not settings.FISCAL_REP_STAMP_ENABLED:
+        raise HTTPException(status_code=503,detail='Timbrado REP deshabilitado')
+    production_preflight(db,draft_id,ctx)
+    draft = get_money_draft(db,draft_id,ctx,lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
+    snap = service.invoice_snapshot(draft)
+    rows = db.query(BillingPayment).filter_by(company_id=draft.company_id,draft_id=draft.id).order_by(BillingPayment.sequence).all()
+    service.verify_payments(rows,snap)
+    payment,receipt = get_payment(db,draft,payment_id,lock=True)
+    if receipt.status not in {'not_sent','rejected'} or receipt.xml_base64 or receipt.uuid or receipt.stamped_at:
+        raise HTTPException(status_code=409,detail='Complemento emitido o pendiente de conciliación; no repetir')
+    # Keep fiscal partiality order even if several collections were declared.
+    for prior in rows[:payment.sequence-1]:
+        cancellations.assert_receipt_active(db, draft, prior.id)
+        _, previous_receipt = get_payment(db,draft,prior.id)
+        if previous_receipt.status != 'stamped':
+            raise HTTPException(status_code=409,detail='Primero concilia o timbra el complemento de la parcialidad anterior')
+    xml = service.build_xml(payment)
+    validation = validate_rep(xml)
+    if not validation['valid']: raise HTTPException(status_code=422,detail={'message':'XML REP no válido; no se contactó al PAC','validation':validation})
+    before = receipt.status
+    claimed = db.execute(update(PaymentReceipt).where(PaymentReceipt.payment_id==payment.id,
+        PaymentReceipt.company_id==draft.company_id,PaymentReceipt.status.in_(('not_sent','rejected')),
+        PaymentReceipt.xml_base64.is_(None),PaymentReceipt.uuid.is_(None),PaymentReceipt.stamped_at.is_(None)
+        ).values(status='processing',request_xml=xml).execution_options(synchronize_session=False)).rowcount
+    if claimed != 1:
+        db.rollback(); raise HTTPException(status_code=409,detail='Otra solicitud reservó el complemento')
+    db.refresh(receipt)
+    service.append_act(db,payment,receipt,ctx,'reserved',before)
+    evidence = {'schema_bundle_sha256':validation['schema_bundle_sha256'],'validation_mode':validation['mode'],'request_xml_sha256':digest(xml),'invoice_xml_sha256':snap['xml_sha256']}
+    service.append_act(db,payment,receipt,ctx,'prepared','processing',evidence)
+    db.commit()  # Reservation/request durable before PAC. No row lock across network.
+    try:
+        result = pac.timbra_cfdi(xml_base64=base64.b64encode(xml.encode()).decode(),id_comprobante='payment-'+payment.id)
+    except TimbraCFDIConfigurationError as exc:
+        receipt.status='not_sent'
+        service.append_act(db,payment,receipt,ctx,'not_called','processing',evidence); db.commit()
+        raise HTTPException(status_code=400,detail='PAC no configurado; no se envió') from exc
+    except Exception as exc:
+        receipt.status='unknown'
+        service.append_act(db,payment,receipt,ctx,'unknown','processing',evidence); db.commit()
+        raise HTTPException(status_code=502,detail='Resultado incierto del complemento; no repetir') from exc
+    info = pac.extract_stamped_document(result)
+    receipt.provider_response = json.dumps(result.get('provider_response'),ensure_ascii=False)
+    if info['success'] and service.validate_returned_xml(xml,info['stamped_xml']):
+        receipt.status='stamped'; receipt.uuid=pac.extract_stamp_uuid(info['stamped_xml'])
+        receipt.xml_base64=base64.b64encode(info['stamped_xml'].encode()).decode(); receipt.stamped_at=datetime.utcnow()
+        evidence['result_xml_sha256']=digest(info['stamped_xml']); action='confirmed'
+    elif not info['success'] and pac.is_explicit_stamp_rejection(result):
+        receipt.status='rejected'; action='rejected'
+    else:
+        receipt.status='unknown'; action='unknown'
+    service.append_act(db,payment,receipt,ctx,action,'processing',evidence)
+    db.commit()
+    if receipt.status=='unknown': raise HTTPException(status_code=502,detail='PAC no confirmó el complemento esperado; requiere conciliación')
+    payment, receipt = get_payment(db, draft, payment_id)
+    return {'ok':receipt.status=='stamped',**payment_view(payment,receipt)}
+
+
+@router.post('/{draft_id}/payments/{payment_id}/receipt/reconcile')
+def recover_receipt(draft_id: str, payment_id: str, body: RecoverReceipt,
+                    ctx: SecurityContext=Depends(write_roles), db: Session=Depends(get_db)):
+    """Retrieve a provider-issued UUID supplied by the operator, never re-stamp."""
+    enabled()
+    if not (rest_transport_is_sandbox() or ppd_production_configured()):
+        raise HTTPException(status_code=503, detail='Transporte de recuperación no autorizado')
+    draft = get_money_draft(db, draft_id, ctx, lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
+    payment, receipt = get_payment(db, draft, payment_id, lock=True)
+    if receipt.status == 'stamped':
+        if (receipt.uuid or '').lower() != str(body.receipt_uuid):
+            raise HTTPException(status_code=409, detail='El complemento ya tiene otro UUID confirmado')
+        return payment_view(payment, receipt)
+    if receipt.status not in {'processing', 'unknown'} or not receipt.request_xml:
+        raise HTTPException(status_code=409, detail='Sólo se recuperan solicitudes con resultado incierto')
+    request_xml, emitter = receipt.request_xml, draft.emitter_rfc
+    db.commit()
+    try: result = pac.retrieve_cfdi(emitter, str(body.receipt_uuid))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail='No se pudo recuperar el XML; no se volvió a timbrar') from exc
+    info = pac.extract_stamped_document(result)
+    if (not info['success'] or not service.validate_returned_xml(request_xml, info['stamped_xml'])
+            or (pac.extract_stamp_uuid(info['stamped_xml']) or '').lower() != str(body.receipt_uuid)):
+        raise HTTPException(status_code=409, detail='El proveedor no devolvió el complemento exacto solicitado')
+    draft = get_money_draft(db, draft_id, ctx, lock=True)
+    cancellations.assert_receipt_active(db, draft, payment_id)
+    payment, receipt = get_payment(db, draft, payment_id, lock=True)
+    db.refresh(receipt)
+    if receipt.status == 'stamped':
+        if (receipt.uuid or '').lower() != str(body.receipt_uuid):
+            raise HTTPException(status_code=409, detail='Otro UUID fue confirmado durante la consulta')
+        return payment_view(payment, receipt)
+    if receipt.status not in {'processing', 'unknown'} or receipt.request_xml != request_xml:
+        raise HTTPException(status_code=409, detail='La solicitud cambió durante la recuperación')
+    snap = service.invoice_snapshot(draft)
+    rows = db.query(BillingPayment).filter_by(company_id=draft.company_id, draft_id=draft.id).order_by(BillingPayment.sequence).all()
+    service.verify_payments(rows, snap)
+    before = receipt.status
+    receipt.status = 'stamped'; receipt.uuid = str(body.receipt_uuid)
+    receipt.xml_base64 = base64.b64encode(info['stamped_xml'].encode()).decode()
+    receipt.stamped_at = datetime.utcnow()
+    receipt.provider_response = json.dumps(result.get('provider_response'), ensure_ascii=False)
+    service.append_act(db, payment, receipt, ctx, 'recovered', before,
+        {'request_xml_sha256': digest(request_xml), 'result_xml_sha256': digest(info['stamped_xml'])})
+    db.commit()
+    payment, receipt = get_payment(db, draft, payment_id)
+    return payment_view(payment, receipt)

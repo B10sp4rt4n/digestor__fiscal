@@ -1,0 +1,36 @@
+{
+  "retrieved_at_utc": "2026-10-26T06:25:58.861376+00:00",
+  "bundle_sha256": "4b29ed13d85ace47eb6c0130b3dbd5a386872541fb8992858643fa3f1ac10454",
+  "sources": [
+    {
+      "url": "http://www.sat.gob.mx/sitio_internet/cfd/4/cfdv40.xsd",
+      "sha256": "2489b5b535f5cbc6a6c2db6132620de1833f85372512d01deea62880e700e276",
+      "bytes": 50607
+    },
+    {
+      "url": "http://www.sat.gob.mx/sitio_internet/cfd/Pagos/Pagos20.xsd",
+      "sha256": "f37dd303a490ecd1b53eff3b6498aa1be9c084afaf903908ca30e8d55c23d14a",
+      "bytes": 34039
+    },
+    {
+      "url": "http://www.sat.gob.mx/sitio_internet/cfd/TimbreFiscalDigital/TimbreFiscalDigitalv11.xsd",
+      "sha256": "fb3d061fe9914500bef8beb3ea2e8722ee8a8224fa3af63643877a64c0ea05f7",
+      "bytes": 4732
+    },
+    {
+      "url": "http://www.sat.gob.mx/sitio_internet/cfd/catalogos/Pagos/catPagos.xsd",
+      "sha256": "72dbaa6e3d6518ac26b1d6a03f44bf4280a4bf1e0361c926bdc714cd3db1dbd6",
+      "bytes": 533
+    },
+    {
+      "url": "http://www.sat.gob.mx/sitio_internet/cfd/catalogos/catCFDI.xsd",
+      "sha256": "6c58936cb77576f839a4d7915953ceaf252b9eb9319f9458fe5bb67ae2bb0bb1",
+      "bytes": 5984046
+    },
+    {
+      "url": "http://www.sat.gob.mx/sitio_internet/cfd/tipoDatos/tdCFDI/tdCFDI.xsd",
+      "sha256": "b3b81fe4017b95d5477f23a32f47e8b0571683cfddfff1330508c75e02b504cd",
+      "bytes": 7315
+    }
+  ]
+}

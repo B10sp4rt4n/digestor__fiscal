@@ -2,7 +2,7 @@ name: Fiscal safety (isolated PostgreSQL)
 
 on:
   push:
-    branches: [fix/billing-idempotency-mvp, feat/fiscal-aup-core, feat/ppd-payment-cycle]
+    branches: [fix/billing-idempotency-mvp, feat/fiscal-aup-core, feat/ppd-payment-cycle, feat/fiscal-payment-cancellation]
     paths:
       - app/**
       - tests/**

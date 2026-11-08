@@ -37,7 +37,8 @@ def invoice_snapshot(draft):
         root = ET.fromstring(xml)
         expected = {'Version': '4.0', 'TipoDeComprobante': 'I', 'Moneda': 'MXN', 'MetodoPago': 'PPD', 'FormaPago': '99', 'Exportacion': '01'}
         if root.tag != '{'+CFDI+'}Comprobante' or any(root.get(k) != v for k, v in expected.items()): raise ValueError()
-        if root.get('Descuento') or root.find('c:CfdiRelacionados', NS) is not None: raise ValueError()
+        if root.get('Descuento'): raise ValueError()
+        if root.find('c:CfdiRelacionados', NS) is not None and not getattr(draft, '_verified_revision_uuid', None): raise ValueError()
         emitter, customer = root.find('c:Emisor', NS), root.find('c:Receptor', NS)
         if emitter is None or customer is None: raise ValueError()
         for node, fields in ((emitter, ('Rfc','Nombre','RegimenFiscal')), (customer, ('Rfc','Nombre','DomicilioFiscalReceptor','RegimenFiscalReceptor'))):
@@ -110,7 +111,8 @@ def verify_payments(rows, snapshot):
 def append_act(db, payment, receipt, ctx, action, before, evidence=None):
     transitions = {'registered': ({'absent'}, {'not_sent'}), 'reserved': ({'not_sent','rejected'}, {'processing'}),
         'prepared': ({'processing'}, {'processing'}), 'not_called': ({'processing'}, {'not_sent'}),
-        'unknown': ({'processing'}, {'unknown'}), 'confirmed': ({'processing'}, {'stamped'}), 'rejected': ({'processing'}, {'rejected'})}
+        'unknown': ({'processing'}, {'unknown'}), 'confirmed': ({'processing'}, {'stamped'}), 'rejected': ({'processing'}, {'rejected'}),
+        'recovered': ({'processing', 'unknown'}, {'stamped'})}
     old, new = transitions[action]
     if before not in old or receipt.status not in new: fail('Transición de complemento no permitida', 409)
     rows = db.query(PaymentAct).filter_by(company_id=payment.company_id, payment_id=payment.id).order_by(PaymentAct.sequence).all()

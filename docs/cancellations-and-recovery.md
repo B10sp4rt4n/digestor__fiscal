@@ -34,7 +34,7 @@ Recuperación REP: POST receipt/reconcile recibe receipt_uuid, consulta `Obtiene
   - https://developers.timbracfdi33.mx/reference/timbrado_consultaestatussat
   - https://developers.timbracfdi33.mx/reference/timbrado_obtienecfdi
 
-No son certificación normativa, aprobación fiscal ni prueba del proveedor real. No se probaron CSD/firmado ni aceptación PAC en esta entrega. Sigue pendiente completar la sustitución/corrección fiscal y el piloto real aislado antes de liberar.
+Estas pruebas sintéticas no son certificación normativa ni aprobación fiscal. La prueba real posterior en QA público se documenta abajo; el ciclo de cancelación no ha sido aceptado por el proveedor.
 
 ## Pruebas reproducibles
 
@@ -56,4 +56,29 @@ Arranque: PostgreSQL exige el esquema fiscal correspondiente. Se corrigió la cr
 
 Validación: sustitución de factura, REP y cadena sucesiva; pago posterior vinculado a UUID activo; conservación de cobro/XML original; resultado incierto, recuperación y rechazo de cambios de negocio; descarte antes de emitir; aislamiento JWT y flags. PostgreSQL descartable comprueba preparación concurrente idempotente, una única llamada de emisión ante dos solicitudes, migración repetible, FK y triggers append-only. La contraparte Cotiza prueba el recorrido entre servicios por HTTP con emisor/JWT/datos/PAC sintéticos.
 
-El acceso Railway disponible sólo devolvió production y nombres de variables (valores ocultos). No se confirmó disponibilidad de una credencial/CSD sandbox ni se usó una credencial genérica como si fuera de pruebas. No hubo firmado ni aceptación real del proveedor. Las correcciones de importes/RFC, reasignación de cobros y casos fuera del perfil permanecen bloqueados; se conserva esta diferencia frente a una liberación fiscal completa.
+El acceso Railway disponible sólo devolvió production y nombres de variables (valores ocultos). No se confirmó disponibilidad de una credencial/CSD sandbox privado ni se usó una credencial genérica como si fuera de pruebas. La prueba posterior usó únicamente el acceso y emisor públicos documentados por el proveedor. Las correcciones de importes/RFC, reasignación de cobros y casos fuera del perfil permanecen bloqueados.
+
+## Ensayo real con QA público, 7 de noviembre de 2026 (CDMX)
+
+Se encontró el token público de pruebas en la documentación oficial del PAC; no fue necesario solicitar credenciales privadas ni registrar CSD de SynAppsSys. El proveedor autoselló los XML usando su emisor de ejemplo. Se usó una base SQLite local separada, sin iniciar la aplicación productiva y con solicitudes restringidas a HTTPS del host QA, sin redirecciones ni reintentos automáticos.
+
+- La primera solicitud se rechazó explícitamente con CFDI40139 por el nombre del emisor. El ejemplo oficial utiliza **INDISTRIA**; no se normalizó a INDUSTRIA. La siguiente corrida corrigió ese dato, con nueva evidencia.
+- Factura PPD aceptada y validada con XSD firmado. Sustituta de factura aceptada con relación 04; no se activó porque no pudo confirmarse la cancelación del origen.
+- En otra corrida independiente: factura PPD → abono 58 → REP1 aceptado → liquidación 58 → REP2 aceptado → cobrado 116 / saldo 0. Ambos XML se recuperaron mediante ObtieneCFDI y coincidieron con el contenido fiscal exacto de sus solicitudes, sin reemisión.
+- CancelaCFDIAck devolvió HTTP500/código330230, EstatusUUID205, «Cfdi no existe en el Sat.» tanto para el origen de factura como para REP2. ConsultaEstatusSat respondió HTTP200, UUID correcto y Vigente. Se conservaron la cancelación sin confirmar, el origen, la sustituta pendiente y los cobros. No se equiparó el HTTP200 de consulta a una cancelación.
+
+Resumen verificable, UUID y hashes de los archivos de evidencia: `docs/public-pac-pilot-20261107.json`. El paquete de evidencia conserva solicitudes/respuestas exactas y bases aisladas; no contiene headers de autenticación ni llaves privadas. No se verificaron criptográficamente los sellos y este ensayo no certifica la matriz normativa completa.
+
+Reproducción opt-in (genera nuevos documentos QA; nunca reutilizar una carpeta existente):
+
+```bash
+.venv/bin/python scripts/run_public_pac_pilot.py --execute-public-sandbox --scenario payments --evidence-dir /tmp/pac-qa-nueva-corrida
+```
+
+El escenario `substitutions` intenta primero la sustitución de factura y se detiene si el origen continúa vigente. No habilitar producción por este resultado. La siguiente condición de liberación es aclarar o resolver el rechazo de cancelación con el PAC y acreditar la confirmación/activación completa en QA, además de la revisión fiscal y la sesión real de usuario.
+
+Fuentes del contrato de prueba:
+- https://developers.timbracfdi33.mx/docs/primeros-pasos
+- https://developers.timbracfdi33.mx/docs/pase-a-producci%C3%B3n
+- https://developers.timbracfdi33.mx/docs/acerca-de
+- https://developers.timbracfdi33.mx/reference/timbrado_timbracfdi

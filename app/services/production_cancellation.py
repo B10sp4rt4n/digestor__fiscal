@@ -172,10 +172,12 @@ def sat_status(root, folio):
     return values
 
 
-def cancel_at_pac(emitter, folio):
+def cancel_at_pac(emitter, folio, reason='03', replacement_uuid=''):
+    if reason not in {'01','02','03'} or ((reason == '01') != bool(replacement_uuid)):
+        fail('Motivo o sustitución no verificable', 422)
     # WSDL: the 40 operation includes motivo/folioSustitucion; old operation does not.
     fields = {'usuarioIntegrador':settings.timbracfdi_active_token, 'rfcEmisor':emitter,
-        'folioUUID':folio, 'motivoCancelacion':'03', 'folioUUIDSustitucion':''}
+        'folioUUID':folio, 'motivoCancelacion':reason, 'folioUUIDSustitucion':replacement_uuid}
     response = requests.post(settings.TIMBRACFDI_SOAP_URL, data=soap_body('CancelaCFDIAck40', fields),
         headers={'Content-Type':'text/xml; charset=utf-8','SOAPAction':'"http://tempuri.org/CancelaCFDIAck40"'},
         timeout=(10,45), allow_redirects=False)

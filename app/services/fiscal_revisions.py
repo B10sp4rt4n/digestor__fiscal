@@ -243,6 +243,6 @@ def view(db, draft, payment_id=None):
     for row in archived:
         verify(db, row)
         archived_items.append({'id':row.id, 'source_uuid':row.source_uuid, 'reason':json.loads(row.declaration)['reason']})
-    return {'active_uuid':extract_stamp_uuid(xml).lower(), 'active_xml_base64':base64.b64encode(xml.encode()).decode(),
+    return {'environment':settings.timbracfdi_environment, 'active_uuid':extract_stamp_uuid(xml).lower(), 'active_xml_base64':base64.b64encode(xml.encode()).decode(),
         'pending':pending is not None, 'kind':'receipt' if payment_id else 'invoice', 'defaults':defaults,
         'history':items, 'archived_history':archived_items, 'economic_payments_unchanged':True}

@@ -6,6 +6,9 @@ class Settings(BaseSettings):
     # Explicit maintenance deployment: deny writes and suppress startup writers.
     FISCAL_MAINTENANCE_MODE: bool = False
     FISCAL_PPD_ENABLED: bool = False
+    FISCAL_CANCELLATION_PRODUCTION_ENABLED: bool = False
+    FISCAL_CORRECTIONS_PRODUCTION_ENABLED: bool = False
+    FISCAL_OPERATIONS_PRODUCTION_EMITTER_RFC: str = ''
     FISCAL_PPD_PRODUCTION_ENABLED: bool = False
     FISCAL_PPD_PRODUCTION_EMITTER_RFC: str = ''
     FISCAL_REP_STAMP_ENABLED: bool = False

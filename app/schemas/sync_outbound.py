@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 
 class DocumentApproveRequest(BaseModel):
+    confirm_review: bool = False
+    expected_revision: str | None = Field(default=None, max_length=64)
     company_id: str | None = Field(default=None, description="Opcional. Déjalo vacío en Swagger; el tenant se detecta desde el documento.")
     notes: str | None = Field(default=None, description="Notas opcionales de aprobación.")
 

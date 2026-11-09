@@ -35,6 +35,7 @@ class CSFCreate(CSFBase):
 
 
 class CSFOut(CSFSummary):
+    review: Optional[dict[str, Any]] = None
     qr_text: Optional[str] = None
     extracted_text: Optional[str] = None
     crm_autofill: Optional[dict[str, str]] = None

@@ -21,6 +21,7 @@ class DocumentTask:
     validate_online: bool
     ip_address: str | None = None
     user_agent: str | None = None
+    use_ai: bool = False
 
 
 def _process_document_task(task: DocumentTask) -> None:
@@ -30,7 +31,7 @@ def _process_document_task(task: DocumentTask) -> None:
         job_service.update_job_processing(db, task.job_id)
 
         ingest.save_upload(task.content, task.filename)
-        data = ingest.process_pdf(task.content, task.company_id, validate_online=task.validate_online)
+        data = ingest.process_pdf(task.content, task.company_id, validate_online=task.validate_online, use_ai=task.use_ai)
         data["source_filename"] = task.filename
 
         csf, _created = _persist_csf(data, db, pdf_bytes=task.content)

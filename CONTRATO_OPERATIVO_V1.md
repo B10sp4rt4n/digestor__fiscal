@@ -136,7 +136,8 @@ Response 200 incluye:
 Body:
 {
   "company_id": "demo-company",
-  "approved_by": "user-id",
+  "confirm_review": true,
+  "expected_revision": "review.revision de GET /csf/{document_id}",
   "notes": "revision completada"
 }
 
@@ -245,6 +246,7 @@ Un documento puede pasar a approved_for_sync solo si:
 - campos requeridos en si: tax_id, legal_name, tax_regime, postal_code, cif_id.
 - field_validation de requeridos = si.
 - validaciones de formato requeridas aprobadas.
+- confirmación humana explícita y revisión exacta vigente; ver [contrato de revisión](docs/csf-review.md).
 
 ## 10) Seguridad y Firma
 - Auth JWT por tenant.

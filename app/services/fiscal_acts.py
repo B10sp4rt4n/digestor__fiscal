@@ -16,6 +16,7 @@ TRANSITIONS = {
     "provider_result_unknown": ({"processing"}, {"unknown"}),
     "stamp_confirmed": ({"processing"}, {"stamped"}),
     "stamp_rejected": ({"processing"}, {"rejected"}),
+    "stamp_recovered": ({"unknown"}, {"stamped"}),
 }
 
 

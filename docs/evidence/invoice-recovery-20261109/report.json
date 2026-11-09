@@ -1,0 +1,45 @@
+{
+  "mode": "public-vendor-sandbox",
+  "production_changed": false,
+  "customer_data_used": false,
+  "signature_verified": false,
+  "requests": [
+    {
+      "operation": "TimbraCFDI",
+      "outcome": "response",
+      "http_status": 200,
+      "response_sha256": "2c89ce06d678cce627a2c16dafcd31754928503eb34159875750d3d3ccc5d6a1"
+    },
+    {
+      "operation": "ObtieneCFDI",
+      "outcome": "response",
+      "http_status": 200,
+      "response_sha256": "8ed7d9d16b6d539d51ae0d1de9c0e4b5b3d2c60ec1a1c59511edf33f4e20a05a"
+    }
+  ],
+  "steps": [
+    {
+      "name": "provider_accepted_demo_invoice",
+      "passed": true
+    },
+    {
+      "name": "lost_response_persists_unknown",
+      "passed": true
+    },
+    {
+      "name": "provider_retrieval_matches_original_request",
+      "passed": true
+    },
+    {
+      "name": "one_issue_one_query_one_metric",
+      "passed": true
+    },
+    {
+      "name": "idempotent_xml_and_valid_local_chain",
+      "passed": true
+    }
+  ],
+  "result": "passed",
+  "invoice_uuid": "95467f7b-6edc-472c-b6dd-9ee691e594fe",
+  "xml_sha256": "90582f9c40551d6d27b229550f318f2ca64df742b0d04b4a6ff8f2c3031f1b68"
+}

@@ -32,6 +32,10 @@ from app.schemas.commercial import (
 from app.services import timbracfdi_client
 from app.services import fiscal_acts
 from app.services import sat_catalog
+from app.services import invoice_recovery
+from pydantic import BaseModel, ConfigDict
+from typing import Literal
+from uuid import UUID
 from app.services.fiscal_rules import decimal_value, money, unit_text, scenario_issues
 from app.services.timbracfdi_client import TimbraCFDIConfigurationError
 
@@ -559,7 +563,7 @@ def _build_cfdi_xml(draft: BillingDraft) -> str:
 
     issue_time = datetime.now(timezone.utc) - timedelta(hours=settings.TIMBRACFDI_EMIT_OFFSET_HOURS)
     fecha = issue_time.strftime("%Y-%m-%dT%H:%M:%S")
-    folio = draft.folio or issue_time.strftime("%Y%m%d%H%M%S")
+    folio = draft.folio or draft.id
     serie_attr = f' Serie="{escape(draft.series or "PF", quote=True)}"'
 
     customer_rfc = (draft.customer_rfc or "").strip().upper()
@@ -767,8 +771,9 @@ def create_billing_draft(
     db: Session = Depends(get_db),
 ):
     cid = enforce_tenant_scope(ctx, body.company_id)
-    now_folio = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    draft_id = str(uuid.uuid4())
     draft = BillingDraft(
+        id=draft_id,
         company_id=cid,
         customer_name=body.customer_name,
         customer_rfc=body.customer_rfc,
@@ -783,7 +788,7 @@ def create_billing_draft(
         payment_method=body.payment_method,
         payment_form=body.payment_form,
         series=body.series,
-        folio=body.folio or now_folio,
+        folio=body.folio or draft_id,
         notes=body.notes,
         created_by=ctx.user_id,
     )
@@ -860,6 +865,20 @@ def get_billing_draft_stamp_result(
         "uuid": uuid_value,
         "xml_base64": xml_base64,
     }
+
+
+class RecoverInvoiceRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    invoice_uuid: UUID
+    confirm: Literal[True]
+
+
+@router.post('/v1/billing/drafts/{draft_id}/stamp-result/recover')
+def recover_billing_draft(draft_id: str, body: RecoverInvoiceRequest,
+    ctx: SecurityContext = Depends(role_guard('operator', 'admin', 'superadmin')),
+    db: Session = Depends(get_db)):
+    invoice_recovery.recover(db, ctx, draft_id, str(body.invoice_uuid))
+    return get_billing_draft_stamp_result(draft_id, None, ctx, db)
 
 
 @router.patch(
@@ -1158,6 +1177,7 @@ def stamp_billing_draft(
             raise ValueError('La clasificación cambió antes de reservar el timbrado')
         xml = _build_cfdi_xml(draft)
         xml_base64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
+        business_hash = invoice_recovery.business_digest(xml)
     except Exception as exc:
         # Fallo local antes de llamar al PAC: seguro liberar la reserva.
         draft.stamp_status = "not_sent"
@@ -1165,7 +1185,8 @@ def stamp_billing_draft(
         db.commit()
         raise HTTPException(status_code=422, detail="No se pudo generar el XML para timbrado.") from exc
     support_id = body.id_comprobante or f"draft-{draft.id}"
-    evidence = {"request_xml_sha256": fiscal_acts.digest(xml), "catalog_source_sha256": classification['catalog']['sourceSha256']}
+    evidence = {"request_xml_sha256": fiscal_acts.digest(xml), "catalog_source_sha256": classification['catalog']['sourceSha256'],
+                "request_business_sha256": business_hash, "draft_sha256": fiscal_acts.draft_digest(draft)}
     fiscal_acts.append(db, draft, ctx, "request_prepared", before, evidence)
     db.commit()
     before = fiscal_acts.state(draft)

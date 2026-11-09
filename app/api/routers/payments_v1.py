@@ -102,11 +102,14 @@ def list_payments(draft_id: str, ctx: SecurityContext=Depends(read_roles), db: S
     for payment in rows:
         _, receipt = get_payment(db,draft,payment.id)
         result.append(payment_view(payment,receipt))
+    invoice_ready = revisions.context(db, draft)[1] is None and not (
+        (current_cancel := cancellations.find(db, draft)) and current_cancel.status in cancellations.BLOCKING)
+    pending = sum(not item['fiscal_ready'] for item in result)
     return {'supported':True, 'environment':settings.timbracfdi_environment, 'currency':'MXN','invoice_uuid':snapshot['uuid'],'total':snapshot['total'],
         'paid':f'{Decimal(snapshot["total"])-balance:.2f}','balance':f'{balance:.2f}',
         'receipt_stamp_enabled':settings.FISCAL_REP_STAMP_ENABLED,
-        'invoice_fiscal_ready':revisions.context(db, draft)[1] is None and not (
-            (current_cancel := cancellations.find(db, draft)) and current_cancel.status in cancellations.BLOCKING),
+        'invoice_fiscal_ready':invoice_ready, 'receipts_pending_count':pending,
+        'economic_settled':balance == 0, 'fiscal_complete':balance == 0 and invoice_ready and pending == 0,
         'invoice_cancellation_status':cancellations.view(cancellations.find(db, draft))['status'], 'payments':result}
 
 
@@ -224,8 +227,9 @@ def recover_receipt(draft_id: str, payment_id: str, body: RecoverReceipt,
         if (receipt.uuid or '').lower() != str(body.receipt_uuid):
             raise HTTPException(status_code=409, detail='El complemento ya tiene otro UUID confirmado')
         return payment_view(payment, receipt)
-    if receipt.status not in {'processing', 'unknown'} or not receipt.request_xml:
-        raise HTTPException(status_code=409, detail='Sólo se recuperan solicitudes con resultado incierto')
+    if receipt.status != 'unknown' or not receipt.request_xml:
+        raise HTTPException(status_code=409, detail='Sólo se recuperan resultados desconocidos; un complemento en proceso permanece protegido')
+    evidence = service.recovery_evidence(db, draft, payment, receipt)
     request_xml, emitter = receipt.request_xml, draft.emitter_rfc
     db.commit()
     try: result = pac.retrieve_cfdi(emitter, str(body.receipt_uuid))
@@ -243,11 +247,10 @@ def recover_receipt(draft_id: str, payment_id: str, body: RecoverReceipt,
         if (receipt.uuid or '').lower() != str(body.receipt_uuid):
             raise HTTPException(status_code=409, detail='Otro UUID fue confirmado durante la consulta')
         return payment_view(payment, receipt)
-    if receipt.status not in {'processing', 'unknown'} or receipt.request_xml != request_xml:
+    if receipt.status != 'unknown' or receipt.request_xml != request_xml:
         raise HTTPException(status_code=409, detail='La solicitud cambió durante la recuperación')
-    snap = service.invoice_snapshot(draft)
-    rows = db.query(BillingPayment).filter_by(company_id=draft.company_id, draft_id=draft.id).order_by(BillingPayment.sequence).all()
-    service.verify_payments(rows, snap)
+    if service.recovery_evidence(db, draft, payment, receipt) != evidence:
+        raise HTTPException(status_code=409, detail='La evidencia cambió durante la recuperación')
     before = receipt.status
     receipt.status = 'stamped'; receipt.uuid = str(body.receipt_uuid)
     receipt.xml_base64 = base64.b64encode(info['stamped_xml'].encode()).decode()

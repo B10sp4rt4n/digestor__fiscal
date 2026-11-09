@@ -16,33 +16,7 @@ router = APIRouter(tags=["Receptor Validation"])
 
 from app.services.fiscal_catalogs import REGIMENES as _REGIMENES
 
-# c_UsoCFDI — código → (descripción, aplica_física, aplica_moral, regimenes_compatibles o None=todos)
-_USOS_CFDI: dict[str, tuple[str, bool, bool, list[str] | None]] = {
-    "G01": ("Adquisición de mercancias", True, True, None),
-    "G02": ("Devoluciones, descuentos o bonificaciones", True, True, None),
-    "G03": ("Gastos en general", True, True, None),
-    "I01": ("Construcciones", True, True, None),
-    "I02": ("Mobilario y equipo de oficina por inversiones", True, True, None),
-    "I03": ("Equipo de transporte", True, True, None),
-    "I04": ("Equipo de computo y accesorios", True, True, None),
-    "I05": ("Dados, troqueles, moldes, matrices y herramental", True, True, None),
-    "I06": ("Comunicaciones telefónicas", True, True, None),
-    "I07": ("Comunicaciones satelitales", True, True, None),
-    "I08": ("Otra maquinaria y equipo", True, True, None),
-    "D01": ("Honorarios médicos, dentales y gastos hospitalarios", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D02": ("Gastos médicos por incapacidad o discapacidad", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D03": ("Gastos funerales", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D04": ("Donativos", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D05": ("Intereses reales efectivamente pagados por créditos hipotecarios (casa habitación)", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D06": ("Aportaciones voluntarias al SAR", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D07": ("Primas por seguros de gastos médicos", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D08": ("Gastos de transportación escolar obligatoria", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D09": ("Depósitos en cuentas para el ahorro, primas que tengan como base planes de pensiones", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "D10": ("Pagos por servicios educativos (colegiaturas)", True, False, ["605", "606", "608", "611", "612", "614", "616", "621", "625", "626"]),
-    "S01": ("Sin efectos fiscales", True, True, None),
-    "CP01": ("Pagos", True, True, None),
-    "CN01": ("Nómina", True, False, ["605"]),
-}
+from app.services.fiscal_catalogs import USOS_CFDI as _USOS_CFDI
 
 # ---------------------------------------------------------------------------
 # Helpers de validación

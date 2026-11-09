@@ -1,5 +1,8 @@
 """Shared local fiscal catalog; syntax/catalog checks are not SAT certification."""
 
+import json
+from pathlib import Path
+
 # c_RegimenFiscal — código → (descripción, aplica_física, aplica_moral)
 REGIMENES: dict[str, tuple[str, bool, bool]] = {
     "601": ("General de Ley Personas Morales", False, True),
@@ -21,4 +24,10 @@ REGIMENES: dict[str, tuple[str, bool, bool]] = {
     "624": ("Coordinados", False, True),
     "625": ("Régimen de las Actividades Empresariales con ingresos a través de Plataformas Tecnológicas", True, False),
     "626": ("Régimen Simplificado de Confianza", True, True),
+}
+# Mirrored in Cotiza/lib/data/sat-uso-cfdi.json for the offline selector.
+_USO_CATALOG = json.loads((Path(__file__).parent.parent / "data" / "sat-uso-cfdi.json").read_text(encoding="utf-8"))
+USOS_CFDI = {
+    entry["code"]: (entry["description"], entry["physical"], entry["moral"], entry["regimes"])
+    for entry in _USO_CATALOG["entries"]
 }

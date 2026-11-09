@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "cfdiVersion": "4.0",
+  "source": "SAT",
+  "sourceUrl": "http://omawww.sat.gob.mx/tramitesyservicios/Paginas/documentos/catCFDI_V_4_20261106.xls",
+  "sourceFile": "catCFDI_V_4_20261106.xls",
+  "publishedAt": "2026-11-06",
+  "checkedAt": "2026-11-08",
+  "sourceSha256": "6249e37275ce164a1c4ac44e726dcd60858dac5c5604ff6c9ab06005a9199e1a",
+  "databaseSha256": "276ceac1858d2babfb21c58dc5345894d1613c2db879f4e4c93d72e3a794f9ce",
+  "bundleSha256": "70eb43fe181ee87c2df027e511b1980d755bc98fa1891ca050477cc88ebc36be",
+  "counts": {
+    "product": 52513,
+    "unit": 2418
+  },
+  "search": "deterministic_text_and_domain_relations_v1",
+  "automaticFiscalClassification": false,
+  "xsdSourceUrl": "https://www.sat.gob.mx/sitio_internet/cfd/catalogos/catCFDI.xsd",
+  "xsdSha256": "6c58936cb77576f839a4d7915953ceaf252b9eb9319f9458fe5bb67ae2bb0bb1",
+  "unitCodeRepresentations": {
+    "Dx": "DX"
+  }
+}

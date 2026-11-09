@@ -57,7 +57,7 @@ def scenario_issues(draft):
         issues.append("unsupported_cfdi_use")
     for index, item in enumerate(draft.items):
         if not re.fullmatch(r"\d{8}", str(item.sat_product_code or "")): issues.append(f"items.{index}.sat_product_code")
-        if not re.fullmatch(r"[A-Z0-9]{2,3}", str(item.unit_code or "")): issues.append(f"items.{index}.unit_code")
+        if not re.fullmatch(r"[A-Za-z0-9]{2,3}", str(item.unit_code or "")): issues.append(f"items.{index}.unit_code")
         if item.tax_object != "02" or Decimal(str(item.tax_rate or 0)) != Decimal("0.16"):
             issues.append(f"items.{index}.unsupported_tax_profile")
         try:

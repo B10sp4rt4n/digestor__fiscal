@@ -57,12 +57,24 @@ def build_csf_review(row):
     cif = original("cif_id", row.id_cif)
     if not re.fullmatch(r"\d+", cif):
         issues["cifId"] = "idCIF ausente o inválido."
+    validation = row.field_validation or []
+    extraction = next((entry.get("extraction", {}) for entry in validation if entry.get("kind") == "extraction_metadata"), {"method": "native"})
+    aliases = {"tax_id": "rfc", "legal_name": "company", "tax_regime": "fiscalRegime", "postal_code": "zipCode"}
+    field_warnings = {}
+    for entry in validation:
+        target = aliases.get(entry.get("field"))
+        if target and entry.get("ocr_needs_review"):
+            field_warnings[target] = "Lectura OCR dudosa. Compara este dato con el PDF y corrígelo si hace falta."
+    address_fields = {"street_name", "ext_number", "int_number", "neighborhood", "municipality", "state"}
+    if any(e.get("field") in address_fields and e.get("ocr_needs_review") and e.get("value") for e in validation):
+        field_warnings["address"] = "Revisa el domicilio leído del escaneo."
     snapshot = {key: getattr(row, key, None) for key in
                 ("csf_hash", "version", "rfc", "razon_social", "regimen", "cp", "id_cif",
                  "crm_autofill", "ai_field_corrections", "corrected_json", "field_validation")}
     revision = hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False,
                                          separators=(",", ":")).encode()).hexdigest()
     return {"revision": revision, "values": values, "regimeText": regime,
+            "extraction": extraction, "fieldWarnings": field_warnings,
             "issues": issues, "suggestions": row.ai_field_corrections or [],
             "cifId": cif, "validationScope": "local_format_and_catalog",
             "regimeOptions": [{"code": code, "label": spec[0]} for code, spec in REGIMENES.items()]}

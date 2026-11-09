@@ -1,5 +1,6 @@
 """Real HTTP handlers, PDF parser, queue worker, SQLite storage and review. No network."""
 from unittest.mock import AsyncMock
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import JSON, create_engine
@@ -18,9 +19,11 @@ import app.models.sucursal
 import app.models.usuario
 from app.services import ingest, document_queue as worker
 from tests.test_csf_review import pdf
+from tests.csf_scan_fixtures import scan_pdf
 
 
-def test_upload_parse_store_review_and_explicit_approval(tmp_path, monkeypatch):
+@pytest.mark.parametrize("scanned", [False, True])
+def test_upload_parse_store_review_and_explicit_approval(tmp_path, monkeypatch, scanned):
     for name in ("crm_autofill", "ai_field_corrections", "corrected_json", "field_validation"):
         monkeypatch.setattr(CSF.__table__.c[name], "type", JSON())
     engine = create_engine(f"sqlite:///{tmp_path / 'csf-test.db'}", connect_args={"check_same_thread": False})
@@ -45,6 +48,8 @@ def test_upload_parse_store_review_and_explicit_approval(tmp_path, monkeypatch):
     app.dependency_overrides[get_db] = db
     app.dependency_overrides[get_security_context] = ctx
     content = pdf("CONSTANCIA DE SITUACIÓN FISCAL\nRFC: AAA010101AAA\nDenominación/Razón Social: EMPRESA DEMO\nCódigo Postal: 01234\nidCIF: 123456789\nRégimen: General de Ley Personas Morales 01/01/2020")
+    if scanned:
+        content = scan_pdf(rotation=90)
     with TestClient(app) as client:
         response = client.post("/v1/documents", files={"file": ("csf.pdf", content, "application/pdf")}, data={"document_type": "csf"})
         assert response.status_code == 200, response.text
@@ -57,7 +62,8 @@ def test_upload_parse_store_review_and_explicit_approval(tmp_path, monkeypatch):
         document_id = result["document_id"]
         detail = client.get(f"/csf/{document_id}").json()
         review = detail["review"]
-        assert review["values"]["company"] == "EMPRESA DEMO"
+        assert review["values"]["company"] == ("EMPRESA SINTETICA DEMO" if scanned else "EMPRESA DEMO")
+        assert review["extraction"]["method"] == ("ocr" if scanned else "native")
         assert review["values"]["fiscalRegime"] == "601"
         assert not review["issues"]
         assert client.get(f"/csf/{document_id}/pdf").content == content

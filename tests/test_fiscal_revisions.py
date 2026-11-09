@@ -134,6 +134,22 @@ def test_unknown_revision_recovered_without_another_stamp(db, monkeypatch):
     assert pac.call_count == 1
 
 
+def test_processing_revision_cannot_recover_before_original_worker_returns(db, monkeypatch):
+    seed_valid(db); action(db,'create',request(db))
+    retrieve = Mock(); monkeypatch.setattr(api.pac,'retrieve_cfdi',retrieve)
+    def issue(**kwargs):
+        # The reservation has been committed while the original provider call is running.
+        with pytest.raises(HTTPException) as exc:
+            action(db,'reconcile',RecoverReceipt(receipt_uuid=str(uuid4())))
+        assert exc.value.status_code == 409
+        retrieve.assert_not_called()
+        return accepted(**kwargs)
+    provider = Mock(side_effect=issue); monkeypatch.setattr(api.pac,'timbra_cfdi',provider)
+    assert action(db,'stamp')['history'][0]['status'] == 'stamped'
+    assert provider.call_count == 1
+    retrieve.assert_not_called()
+
+
 def test_abandon_unissued_revision_preserves_acts_and_accepts_new_correction(db):
     seed_valid(db); first=request(db); action(db,'create',first)
     assert action(db,'abandon')['pending'] is False
@@ -203,6 +219,7 @@ def test_postgres_simultaneous_create_and_stamp_only_issues_once(pg_engine, monk
     def issue(**kwargs):
         entered.set(); assert release.wait(10); return accepted(**kwargs)
     provider=Mock(side_effect=issue); monkeypatch.setattr(api.pac,'timbra_cfdi',provider)
+    retrieve=Mock(); monkeypatch.setattr(api.pac,'retrieve_cfdi',retrieve)
     def emit():
         with sessionmaker(bind=pg_engine)() as db: return action(db,'stamp')
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -212,6 +229,11 @@ def test_postgres_simultaneous_create_and_stamp_only_issues_once(pg_engine, monk
             with sessionmaker(bind=pg_engine)() as db:
                 with pytest.raises(HTTPException) as exc: action(db,'stamp')
                 assert exc.value.status_code == 409
+            with sessionmaker(bind=pg_engine)() as db:
+                with pytest.raises(HTTPException) as exc:
+                    action(db,'reconcile',RecoverReceipt(receipt_uuid=str(uuid4())))
+                assert exc.value.status_code == 409
+                retrieve.assert_not_called()
         finally: release.set()
         assert future.result(10)['history'][0]['status'] == 'stamped'
     assert provider.call_count == 1

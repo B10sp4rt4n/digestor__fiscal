@@ -166,6 +166,8 @@ def main():
                     emitted = {'ok': True, **recovered}
                 else:
                     emitted = payments.stamp_receipt(draft.id, declared['id'], ctx, db)
+                    if not emitted.get('ok'):
+                        check(f'rep{sequence}_issued', False)
                     recovered = pac.extract_stamped_document(pac.retrieve_cfdi(draft.emitter_rfc, emitted['receipt_uuid']))
                     receipt = db.query(PaymentReceipt).filter_by(payment_id=declared['id']).one()
                     check(f'rep{sequence}_retrieved_without_reissue', recovered['success'] and

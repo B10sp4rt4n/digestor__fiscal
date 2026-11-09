@@ -1,0 +1,2 @@
+# Offline catalog snapshot builder only; not a runtime service dependency.
+xlrd==2.0.2

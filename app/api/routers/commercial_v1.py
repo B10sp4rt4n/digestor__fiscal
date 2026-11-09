@@ -31,6 +31,7 @@ from app.schemas.commercial import (
 )
 from app.services import timbracfdi_client
 from app.services import fiscal_acts
+from app.services import sat_catalog
 from app.services.fiscal_rules import decimal_value, money, unit_text, scenario_issues
 from app.services.timbracfdi_client import TimbraCFDIConfigurationError
 
@@ -1119,6 +1120,12 @@ def stamp_billing_draft(
         )
     if _missing_fields(draft):
         raise HTTPException(status_code=422, detail="La prefactura tiene datos pendientes y no puede timbrarse.")
+    try:
+        classification = sat_catalog.validate_pairs([{"itemNumber": index + 1, "satProductCode": item.sat_product_code, "unitCode": item.unit_code} for index, item in enumerate(draft.items)])
+    except sat_catalog.CatalogUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
+    if not classification['valid']:
+        raise HTTPException(status_code=422, detail="Revisa las claves SAT de las partidas: alguna no existe o no está vigente.")
 
     # Reserva atomica y persistente ANTES de llamar al PAC. No se mantiene
     # una transaccion abierta durante el request de red. Ante incertidumbre,
@@ -1147,6 +1154,8 @@ def stamp_billing_draft(
     before = fiscal_acts.state(draft)
 
     try:
+        if not sat_catalog.validate_pairs([{"itemNumber": index + 1, "satProductCode": item.sat_product_code, "unitCode": item.unit_code} for index, item in enumerate(draft.items)])['valid']:
+            raise ValueError('La clasificación cambió antes de reservar el timbrado')
         xml = _build_cfdi_xml(draft)
         xml_base64 = base64.b64encode(xml.encode("utf-8")).decode("ascii")
     except Exception as exc:
@@ -1156,7 +1165,7 @@ def stamp_billing_draft(
         db.commit()
         raise HTTPException(status_code=422, detail="No se pudo generar el XML para timbrado.") from exc
     support_id = body.id_comprobante or f"draft-{draft.id}"
-    evidence = {"request_xml_sha256": fiscal_acts.digest(xml)}
+    evidence = {"request_xml_sha256": fiscal_acts.digest(xml), "catalog_source_sha256": classification['catalog']['sourceSha256']}
     fiscal_acts.append(db, draft, ctx, "request_prepared", before, evidence)
     db.commit()
     before = fiscal_acts.state(draft)

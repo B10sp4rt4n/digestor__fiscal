@@ -7,6 +7,7 @@ on:
       - app/**
       - tests/**
       - scripts/install_fiscal_cycle.py
+      - scripts/run*invoice*recovery*.py
       - migrations/**
       - requirements.fiscal-test.txt
       - railpack.json
@@ -57,3 +58,5 @@ jobs:
           .venv/bin/pip install --index-url https://pypi.org/simple --only-binary=:all: -r requirements.txt -r requirements.fiscal-test.txt
       - name: Full offline suite, maintenance and two-connection concurrency
         run: .venv/bin/python -m pytest -q tests
+      - name: Compile opt-in invoice recovery harnesses (no provider requests)
+        run: .venv/bin/python -m py_compile scripts/run_invoice_recovery_fixture.py scripts/run_public_invoice_recovery.py

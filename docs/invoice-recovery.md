@@ -45,3 +45,24 @@ separadas. Un UUID ya asociado a otro borrador se rechaza, incluso si ambos XML
 son comercialmente idénticos. En PostgreSQL, un bloqueo transaccional por
 tenant/UUID serializa recuperaciones concurrentes antes de asociar el documento.
 Los folios aportados explícitamente conservan su valor.
+
+
+## PAC público de pruebas, 9 de noviembre de 2026
+
+`run_public_invoice_recovery.py --execute-public-sandbox --evidence-dir RUTA_NUEVA`
+ejecutó el adaptador REST real contra pruebas.timbracfdi33.mx:1444 con la
+identidad/token de demostración publicados por el proveedor. Una aceptación
+200 seguida de pérdida local deliberada de respuesta dejó `unknown`. Una sola
+consulta `ObtieneCFDI` 200 recuperó el XML con estructura idéntica a la solicitud
+original; repetir la recuperación no emitió ni consultó de nuevo. Un registro
+fiscal económico, cadena local íntegra y mismo XML conservado.
+
+Evidencia completa de solicitudes/respuestas sintéticas y reporte:
+`docs/evidence/invoice-recovery-20261109/`. No se enviaron cabeceras de
+autorización a esos archivos ni se usaron RFC, CSD o credenciales de clientes.
+Este ensayo acredita el transporte REST público de pruebas, no la instalación
+productiva SOAP, validez criptográfica de sellos ni cobertura de todos los PAC.
+Antes de publicar, conservar revisión del transporte productivo activo y desplegar
+Digestor antes de Cotiza. Concurrencia PostgreSQL comprobada en CI:
+https://github.com/B10sp4rt4n/digestor__fiscal/actions/runs/42606653428
+(308 pruebas y 54 subpruebas aprobadas).

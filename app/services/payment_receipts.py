@@ -108,13 +108,7 @@ def verify_payments(rows, snapshot):
     return balance, base, tax
 
 
-def append_act(db, payment, receipt, ctx, action, before, evidence=None):
-    transitions = {'registered': ({'absent'}, {'not_sent'}), 'reserved': ({'not_sent','rejected'}, {'processing'}),
-        'prepared': ({'processing'}, {'processing'}), 'not_called': ({'processing'}, {'not_sent'}),
-        'unknown': ({'processing'}, {'unknown'}), 'confirmed': ({'processing'}, {'stamped'}), 'rejected': ({'processing'}, {'rejected'}),
-        'recovered': ({'processing', 'unknown'}, {'stamped'})}
-    old, new = transitions[action]
-    if before not in old or receipt.status not in new: fail('Transición de complemento no permitida', 409)
+def verify_acts(db, payment):
     rows = db.query(PaymentAct).filter_by(company_id=payment.company_id, payment_id=payment.id).order_by(PaymentAct.sequence).all()
     previous, previous_id, previous_state = None, None, None
     for index, row in enumerate(rows, 1):
@@ -128,6 +122,34 @@ def append_act(db, payment, receipt, ctx, action, before, evidence=None):
                 raise ValueError()
             previous, previous_id, previous_state = row.content_hash, row.id, data['state_after']
         except (ValueError, KeyError, TypeError): fail('Integridad de actos de pago no verificable', 409)
+    return rows, previous, previous_id, previous_state
+
+
+def recovery_evidence(db, draft, payment, receipt):
+    snapshot = invoice_snapshot(draft)
+    rows = db.query(BillingPayment).filter_by(company_id=draft.company_id, draft_id=draft.id).order_by(BillingPayment.sequence).all()
+    verify_payments(rows, snapshot)
+    acts, _, _, state = verify_acts(db, payment)
+    payloads = [json.loads(row.payload) for row in acts]
+    prepared = [row for row in payloads if row.get("action_or_state") == "payment.prepared"]
+    evidence = prepared[-1].get("evidence_refs", {}) if prepared else {}
+    if not isinstance(evidence, dict): fail("Evidencia del complemento no verificable", 409)
+    if (state != receipt.status or not receipt.request_xml
+        or evidence.get("request_xml_sha256") != digest(receipt.request_xml)
+        or evidence.get("invoice_xml_sha256") != snapshot["xml_sha256"]
+        or evidence.get("declaration_sha256") != payment.declaration_hash):
+        fail("La solicitud original del complemento no es verificable; requiere revisión manual", 409)
+    return evidence
+
+
+def append_act(db, payment, receipt, ctx, action, before, evidence=None):
+    transitions = {'registered': ({'absent'}, {'not_sent'}), 'reserved': ({'not_sent','rejected'}, {'processing'}),
+        'prepared': ({'processing'}, {'processing'}), 'not_called': ({'processing'}, {'not_sent'}),
+        'unknown': ({'processing'}, {'unknown'}), 'confirmed': ({'processing'}, {'stamped'}), 'rejected': ({'processing'}, {'rejected'}),
+        'recovered': ({'unknown'}, {'stamped'})}
+    old, new = transitions[action]
+    if before not in old or receipt.status not in new: fail('Transición de complemento no permitida', 409)
+    rows, previous, previous_id, previous_state = verify_acts(db, payment)
     if previous_state is not None and previous_state != before: fail('Estado de complemento no coincide con su historial', 409)
     now = datetime.now(timezone.utc); event_id = str(uuid.uuid4())
     payload = {'recordia_version':'1.0', 'contract_version':'payment-act/1.0', 'event_id':event_id,

@@ -89,7 +89,12 @@ def login(body: dict):
     return {'access_token':create_access_token({'sub':CTX.user_id,'tenant':CTX.tenant_id,'role':'operator'}),'expires_in':600}
 
 @app.get('/__fixture')
-def fixture(): return {'synthetic':True,'calls':calls,'last_uuid':last_uuid}
+def fixture():
+    with Session() as db:
+        invoice = db.query(BillingDraft).filter_by(id='credit-invoice', company_id=CTX.tenant_id).one()
+        return {'synthetic':True, 'mode':'synthetic-ppd-cycle-no-pac', 'calls':calls,'last_uuid':last_uuid,
+            'invoice':{'draftId':invoice.id, 'uuid':pac.extract_stamp_uuid(base64.b64decode(invoice.stamped_xml_base64).decode()),
+                'xmlBase64':invoice.stamped_xml_base64}}
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(); parser.add_argument('--port', type=int, default=8769)

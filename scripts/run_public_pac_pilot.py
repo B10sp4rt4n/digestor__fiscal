@@ -20,7 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--execute-public-sandbox', action='store_true')
     parser.add_argument('--evidence-dir', type=Path, required=True)
-    parser.add_argument('--scenario', choices=('payments', 'substitutions'), default='payments')
+    parser.add_argument('--scenario', choices=('payments', 'payments-recovery', 'substitutions'), default='payments')
     args = parser.parse_args()
     if not args.execute_public_sandbox:
         parser.error('Explicit --execute-public-sandbox required; nothing was sent')
@@ -49,7 +49,8 @@ def main():
     from app.models import csf, evento, user, usuario, sucursal  # noqa: F401
     from app.schemas.commercial import DraftItemInput
     from app.schemas.billing_payment import RegisterPayment
-    from app.schemas.billing_cancellation import CancelDocument
+    from app.schemas.billing_cancellation import CancelDocument, RecoverReceipt
+    from fastapi import HTTPException
     from app.schemas.fiscal_revision import CreateFiscalRevision
     from app.services import timbracfdi_client as pac, fiscal_revisions as fiscal
 
@@ -140,13 +141,37 @@ def main():
                 declared = payments.register_payment(draft.id, RegisterPayment(amount='58.00',
                     paid_at=datetime.now(timezone.utc), payment_form='03',
                     reference=f'QA-{draft.id}-{sequence}', idempotency_key=uuid4()), ctx, db)
-                emitted = payments.stamp_receipt(draft.id, declared['id'], ctx, db)
+                if args.scenario == 'payments-recovery' and sequence == 2:
+                    original_sender, captured = pac.timbra_cfdi, {}
+                    def lose_response(**kwargs):
+                        response = original_sender(**kwargs)
+                        info = pac.extract_stamped_document(response)
+                        if not info['success']: return response
+                        captured['uuid'] = pac.extract_stamp_uuid(info['stamped_xml'])
+                        raise TimeoutError('Intentional local response loss after QA acceptance')
+                    pac.timbra_cfdi = lose_response
+                    try:
+                        payments.stamp_receipt(draft.id, declared['id'], ctx, db)
+                    except HTTPException as exc:
+                        if exc.status_code != 502: raise
+                    finally: pac.timbra_cfdi = original_sender
+                    pending = payments.list_payments(draft.id, ctx, db)
+                    check('cash_zero_rep_pending', pending['balance'] == '0.00' and not pending['fiscal_complete']
+                        and pending['payments'][-1]['receipt_status'] == 'unknown' and bool(captured.get('uuid')))
+                    recovered = payments.recover_receipt(draft.id, declared['id'], RecoverReceipt(receipt_uuid=captured['uuid']), ctx, db)
+                    count = len(report['requests'])
+                    repeated = payments.recover_receipt(draft.id, declared['id'], RecoverReceipt(receipt_uuid=captured['uuid']), ctx, db)
+                    check('rep2_recovered_idempotently_without_reissue', recovered['receipt_status'] == repeated['receipt_status'] == 'stamped'
+                        and count == len(report['requests']))
+                    emitted = {'ok': True, **recovered}
+                else:
+                    emitted = payments.stamp_receipt(draft.id, declared['id'], ctx, db)
+                    recovered = pac.extract_stamped_document(pac.retrieve_cfdi(draft.emitter_rfc, emitted['receipt_uuid']))
+                    receipt = db.query(PaymentReceipt).filter_by(payment_id=declared['id']).one()
+                    check(f'rep{sequence}_retrieved_without_reissue', recovered['success'] and
+                        pac.extract_stamp_uuid(recovered['stamped_xml']) == emitted['receipt_uuid'] and
+                        payments.service.validate_returned_xml(receipt.request_xml, recovered['stamped_xml']))
                 check(f'rep{sequence}_issued', emitted['ok'], uuid=emitted.get('receipt_uuid'))
-                recovered = pac.extract_stamped_document(pac.retrieve_cfdi(draft.emitter_rfc, emitted['receipt_uuid']))
-                receipt = db.query(PaymentReceipt).filter_by(payment_id=declared['id']).one()
-                check(f'rep{sequence}_retrieved_without_reissue', recovered['success'] and
-                    pac.extract_stamp_uuid(recovered['stamped_xml']) == emitted['receipt_uuid'] and
-                    payments.service.validate_returned_xml(receipt.request_xml, recovered['stamped_xml']))
                 if sequence == 1 and args.scenario == 'substitutions':
                     first_id = declared['id']
                     change = CreateFiscalRevision(source_uuid=emitted['receipt_uuid'], idempotency_key=uuid4(),
@@ -160,9 +185,12 @@ def main():
             summary = payments.list_payments(draft.id, ctx, db)
             check('cash_preserved_balance_zero', summary['paid'] == '116.00' and summary['balance'] == '0.00'
                 and db.query(BillingPayment).count() == 2 and draft.stamped_xml_base64 == base64.b64encode(stamped.encode()).decode())
-            cancellations.request(draft.id, CancelDocument(idempotency_key=uuid4(), reason='02'), ctx, db, declared['id'])
-            state = cancellations.reconcile(draft.id, ctx, db, declared['id'])
-            check('rep2_cancelled', state['status'] == 'cancelled')
+            if args.scenario == 'payments-recovery':
+                check('fiscal_completion_after_recovery', summary['fiscal_complete'] and summary['receipts_pending_count'] == 0)
+            else:
+                cancellations.request(draft.id, CancelDocument(idempotency_key=uuid4(), reason='02'), ctx, db, declared['id'])
+                state = cancellations.reconcile(draft.id, ctx, db, declared['id'])
+                check('rep2_cancelled', state['status'] == 'cancelled')
             report['result'] = 'passed'
     except Exception as exc:
         report['result'] = 'stopped'

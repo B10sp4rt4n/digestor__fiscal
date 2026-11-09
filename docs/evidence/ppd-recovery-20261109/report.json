@@ -1,0 +1,90 @@
+{
+  "started_at": "2026-11-09T11:53:09.726137+00:00",
+  "mode": "live-public-vendor-QA",
+  "host": "pruebas.timbracfdi33.mx:1444",
+  "customer_data_used": false,
+  "production_changed": false,
+  "signature_verified": false,
+  "scenario": "payments-recovery",
+  "steps": [
+    {
+      "name": "invoice_unsigned_xsd",
+      "passed": true
+    },
+    {
+      "name": "invoice_pac_accepted",
+      "passed": true,
+      "provider_code": 0,
+      "provider_message": ""
+    },
+    {
+      "name": "invoice_signed_xsd",
+      "passed": true
+    },
+    {
+      "name": "rep1_retrieved_without_reissue",
+      "passed": true
+    },
+    {
+      "name": "rep1_issued",
+      "passed": true,
+      "uuid": "a5d72e43-bcfc-4209-a640-613a8bce45e1"
+    },
+    {
+      "name": "cash_zero_rep_pending",
+      "passed": true
+    },
+    {
+      "name": "rep2_recovered_idempotently_without_reissue",
+      "passed": true
+    },
+    {
+      "name": "rep2_issued",
+      "passed": true,
+      "uuid": "2c9f44f5-5246-4f15-b8b8-270a7f888724"
+    },
+    {
+      "name": "cash_preserved_balance_zero",
+      "passed": true
+    },
+    {
+      "name": "fiscal_completion_after_recovery",
+      "passed": true
+    }
+  ],
+  "requests": [
+    {
+      "operation": "TimbraCFDI",
+      "outcome": "response",
+      "http_status": 200,
+      "response_sha256": "f410374b3a375225783754c4f12d682a99b3e6c27c2b201abc7e57658256e1eb"
+    },
+    {
+      "operation": "TimbraCFDI",
+      "outcome": "response",
+      "http_status": 200,
+      "response_sha256": "671c3e3e970ef649e15755c7048d8d95a74e5aae551fd85f8f70f677e637dd64"
+    },
+    {
+      "operation": "ObtieneCFDI",
+      "outcome": "response",
+      "http_status": 200,
+      "response_sha256": "902b10873a1d1baa9881d9428f6e1ca4cc6506133f02f3c05f145fb903982a66"
+    },
+    {
+      "operation": "TimbraCFDI",
+      "outcome": "response",
+      "http_status": 200,
+      "response_sha256": "599edc13eabe7ef79ba18f6150e5afa035efe753de2710c4366cacea78196c64"
+    },
+    {
+      "operation": "ObtieneCFDI",
+      "outcome": "response",
+      "http_status": 200,
+      "response_sha256": "34d61c83c198755cecf3cbefd3d81e245b04ed254d2b38fa5db02a61adb9e14d"
+    }
+  ],
+  "invoice_uuid": "e3ca83cf-f067-431a-91c8-f30f9cb45d4f",
+  "result": "passed",
+  "finished_at": "2026-11-09T11:53:33.205174+00:00"
+}

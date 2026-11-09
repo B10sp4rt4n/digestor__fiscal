@@ -91,7 +91,7 @@ def action(draft_id, operation, body, ctx, db, payment_id=None):
         except Exception:
             result, outcome = None, 'unknown'
     elif operation == 'reconcile':
-        if row.status not in {'processing', 'unknown'}: svc.fail('Sólo se recuperan sustituciones con resultado incierto')
+        if row.status != 'unknown': svc.fail('Sólo se recuperan sustituciones con resultado incierto; una emisión en proceso conserva su reserva')
         revision_id, request_xml, emitter = row.id, row.request_xml, draft.emitter_rfc
         db.commit()
         try: result = pac.retrieve_cfdi(emitter, str(body.receipt_uuid))

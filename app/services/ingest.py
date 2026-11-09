@@ -147,7 +147,7 @@ def _extract_first(text: str, patterns: list[str], flags: int = 0) -> Optional[s
     for pattern in patterns:
         match = re.search(pattern, text, flags)
         if match:
-            return _clean_field(match.group(1))
+            return _clean_field(match.group(1) if match.lastindex else match.group(0))
     return None
 
 
@@ -1074,7 +1074,7 @@ def format_extracted_csf_text(text: Optional[str]) -> str:
     return formatted
 
 
-def _parse_csf_fields(text: str) -> Dict[str, Any]:
+def _parse_csf_fields(text: str, use_ai: bool = False) -> Dict[str, Any]:
     """
     Extrae campos clave de la CSF.
 
@@ -1121,6 +1121,11 @@ def _parse_csf_fields(text: str) -> Dict[str, Any]:
     )
     if not razon_social:
         razon_social = _pick_from_pairs(colon_pairs, ["Denominación/Razón Social", "Nombre, denominación o razón social"])
+
+    if not razon_social:
+        names = [_pick_from_pairs(colon_pairs, labels) for labels in
+                 (["Nombre(s)", "Nombres"], ["Primer Apellido"], ["Segundo Apellido"])]
+        razon_social = " ".join(name for name in names if name) or None
 
     # --- Régimen fiscal (en sección de regímenes) ---
     regimen = _extract_first(
@@ -1179,7 +1184,7 @@ def _parse_csf_fields(text: str) -> Dict[str, Any]:
     # Fallback Groq: si faltan campos críticos y el parser está habilitado
     # ---------------------------------------------------------------------------
     missing_critical = not rfc or rfc == "DESCONOCIDO" or not razon_social
-    if missing_critical and settings.GROQ_PARSER_ENABLED:
+    if missing_critical and use_ai and settings.GROQ_PARSER_ENABLED:
         logger.info("Parser regex incompleto (rfc=%s, razon_social=%s). Usando Groq fallback.", rfc, razon_social)
         groq_result = _parse_csf_via_groq(text)
         if groq_result:
@@ -1268,10 +1273,10 @@ def validate_qr_status(qr_text: Optional[str], validate_online: bool = False) ->
     return {"qr_valid": qr_valid, "qr_online": qr_online}
 
 
-def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool] = None) -> Dict[str, Any]:
+def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool] = None, use_ai: bool = False) -> Dict[str, Any]:
     """Procesa un PDF de CSF y devuelve los datos extraídos."""
     text = _extract_text_from_pdf(content)
-    fields = _parse_csf_fields(text)
+    fields = _parse_csf_fields(text, use_ai=use_ai)
     colon_pairs = _extract_colon_pairs(text)
     crm_autofill = _build_crm_autofill(fields, colon_pairs)
     crm_autofill_complete = _build_crm_autofill(fields, colon_pairs, include_empty=True)
@@ -1285,7 +1290,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
             crm_autofill.setdefault("geo_city", geolocation["city"])
         if geolocation.get("state"):
             crm_autofill.setdefault("geo_state", geolocation["state"])
-    ai_field_corrections = _suggest_field_corrections(crm_autofill_complete, text)
+    ai_field_corrections = _suggest_field_corrections(crm_autofill_complete, text) if use_ai else []
     corrected_json = _build_corrected_json(crm_autofill_complete, ai_field_corrections)
     field_validation = _build_field_validation_report(crm_autofill_complete, ai_field_corrections)
     csf_hash = _sha256(content)
@@ -1320,7 +1325,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
     }
 
 
-def process_zip(content: bytes, company_id: str, validate_online: Optional[bool] = None) -> list[Dict[str, Any]]:
+def process_zip(content: bytes, company_id: str, validate_online: Optional[bool] = None, use_ai: bool = False) -> list[Dict[str, Any]]:
     """Procesa un ZIP con múltiples PDFs de CSF."""
     results = []
     with zipfile.ZipFile(io.BytesIO(content)) as zf:
@@ -1329,7 +1334,7 @@ def process_zip(content: bytes, company_id: str, validate_online: Optional[bool]
                 continue
             pdf_bytes = zf.read(name)
             try:
-                data = process_pdf(pdf_bytes, company_id, validate_online=validate_online)
+                data = process_pdf(pdf_bytes, company_id, validate_online=validate_online, use_ai=use_ai)
                 data["filename"] = name
                 data["_pdf_bytes"] = pdf_bytes
                 results.append(data)

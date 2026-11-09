@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.models.csf import CSF
 from app.schemas.csf import CSFDashboardMetrics, CSFListResponse, CSFOut, CSFRegimenMetric, CSFStatusMetric, RevalidateQRResult
 from app.services import ingest
+from app.services.csf_review import build_csf_review
 
 router = APIRouter(prefix="/csf", tags=["csf"])
 
@@ -121,6 +122,7 @@ def get_csf(
         raise HTTPException(status_code=403, detail="No puedes acceder a otro tenant.")
 
     data = CSFOut.model_validate(row).model_dump()
+    data["review"] = build_csf_review(row)
 
     # Usar datos persistidos si existen; solo re-computar si no hay datos guardados.
     has_stored_ai = row.crm_autofill is not None

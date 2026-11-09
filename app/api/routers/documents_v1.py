@@ -8,6 +8,7 @@ from app.db.session import get_db
 from app.models.csf import CSF
 from app.schemas.document_api import UniversalDocumentResponse, UniversalDocumentResult
 from app.schemas.sync_outbound import DocumentApproveRequest, DocumentApproveResponse
+from app.services.csf_review import build_csf_review
 from app.services import audit_service, job_service
 from app.services.document_queue import DocumentTask, document_queue
 
@@ -32,13 +33,14 @@ async def ingest_document(
     document_type: str = Form(default="csf", description="Tipo de documento. Para este flujo usa `csf`.", examples=["csf"]),
     company_id: str | None = Form(default=None, description="Opcional. Déjalo vacío en Swagger; el tenant se resuelve desde tu token.", examples=[""]),
     validate_online: bool = Form(default=False, description="Si true, intenta validación online adicional."),
+    use_ai: bool = Form(default=False, description="Opcional; permite llamadas a servicios IA configurados."),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
     request: Request = None,
 ):
     """Contrato universal v1 para ingesta de documentos.
 
-    Devuelve job_id inmediatamente. Usa GET /v1/{job_id} para consultar progreso.
+    Devuelve job_id inmediatamente. Usa GET /v1/documents/{job_id} para consultar progreso.
     """
     # Swagger suele enviar company_id="string" para campos opcionales.
     # Lo tratamos como no informado para evitar errores falsos de tenant.
@@ -83,6 +85,7 @@ async def ingest_document(
             filename=file.filename,
             content=content,
             validate_online=validate_online,
+            use_ai=use_ai,
             ip_address=request.client.host if request else None,
             user_agent=request.headers.get("user-agent") if request else None,
         )
@@ -143,7 +146,7 @@ def get_job_status(
     "/{document_id}/approve",
     response_model=DocumentApproveResponse,
     summary="3) Aprobar documento para sincronización",
-    description="Pega el `document_id` y deja el body como `{}` o solo manda `notes`. No necesitas enviar `company_id`.",
+    description="Revisa GET /csf/{document_id}. Envía confirm_review=true y expected_revision=review.revision. No necesitas enviar company_id.",
 )
 def approve_document_for_sync(
     document_id: str,
@@ -151,7 +154,7 @@ def approve_document_for_sync(
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
-    row = db.query(CSF).filter(CSF.id == document_id).first()
+    row = db.query(CSF).filter(CSF.id == document_id).with_for_update().first()
     if not row:
         raise HTTPException(status_code=404, detail="Documento no encontrado.")
 
@@ -161,24 +164,27 @@ def approve_document_for_sync(
         raise HTTPException(status_code=403, detail="No puedes acceder a este documento.")
     cid = row.company_id
 
-    required_fields = {
-        "tax_id": bool((row.rfc or "").strip()),
-        "legal_name": bool((row.razon_social or "").strip()),
-        "tax_regime": bool((row.regimen or "").strip()),
-        "postal_code": bool((row.cp or "").strip()),
-        "cif_id": bool((row.id_cif or "").strip()),
-    }
-    missing = [field for field, ok in required_fields.items() if not ok]
-    if missing:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error_code": "VALIDATION_FAILED",
-                "message": "Documento no cumple criterios de aprobacion para sync.",
-                "details": {"missing_fields": missing},
-            },
-        )
+    review = build_csf_review(row)
+    if not body.confirm_review or not body.expected_revision:
+        raise HTTPException(status_code=428, detail={
+            "error_code": "REVIEW_REQUIRED",
+            "message": "Revisa GET /csf/{document_id} y confirma la revisión exacta.",
+        })
+    if body.expected_revision != review["revision"]:
+        raise HTTPException(status_code=409, detail={
+            "error_code": "STALE_REVIEW", "message": "La CSF cambió. Vuelve a revisarla.",
+        })
+    if review["issues"]:
+        raise HTTPException(status_code=422, detail={
+            "error_code": "VALIDATION_FAILED",
+            "message": "La CSF requiere corrección antes de aprobarla.",
+            "details": {"fields": review["issues"]},
+        })
 
+    # Persist only the original/normalized values the user explicitly reviewed.
+    accepted = review["values"]
+    row.rfc, row.razon_social = accepted["rfc"], accepted["company"]
+    row.regimen, row.cp, row.id_cif = accepted["fiscalRegime"], accepted["zipCode"], review["cifId"]
     approved_at = datetime.utcnow()
     row.processing_status = "approved_for_sync"
     row.status_reason = f"approved_by:{ctx.user_id}"
@@ -195,6 +201,8 @@ def approve_document_for_sync(
         details={
             "notes": body.notes,
             "processing_status": row.processing_status,
+            "review_revision": review["revision"],
+            "confirmed_review": True,
         },
         status="success",
     )

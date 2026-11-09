@@ -39,30 +39,9 @@ def _compute_processing_status(qr_valid: bool | None, source_filename: str | Non
     return "incomplete", "missing_source_file"
 
 
-def _apply_ai_corrections_to_main_fields(data: dict) -> None:
-    """Aplica correcciones de alta confianza del corrected_json a los campos principales."""
-    corrected = data.get("corrected_json")
-    if not corrected:
-        return
-    # Mapeo de campo CRM → campo CSF principal
-    field_map = {
-        "tax_id": "rfc",
-        "legal_name": "razon_social",
-        "tax_regime": "regimen",
-        "postal_code": "cp",
-        "curp": "curp",
-        "cif_id": "id_cif",
-    }
-    for crm_field, csf_field in field_map.items():
-        corrected_val = (corrected.get(crm_field) or "").strip()
-        if corrected_val:
-            data[csf_field] = corrected_val
-
-
 def _persist_csf(data: dict, db: Session, pdf_bytes: bytes | None = None) -> tuple[CSF, bool]:
     """Inserta o recupera CSF por hash. Retorna (csf, created)."""
-    # Aplica correcciones IA de alta confianza a los campos principales antes de guardar.
-    _apply_ai_corrections_to_main_fields(data)
+    # Preserve extracted facts. AI suggestions remain separate until human review.
 
     # Evita colisiones entre tenants para el mismo documento.
     # El hash almacenado queda aislado por company_id para mantener deduplicacion local al tenant.
@@ -189,6 +168,7 @@ async def upload_pdf(
     company_id: str | None = Form(default=None, description="Opcional. Déjalo vacío en Swagger.", examples=[""]),
     qr_text: str | None = Form(default=None, description="Texto QR opcional si ya lo tienes extraído."),
     validate_online: bool = Form(default=False, description="Si true, intenta validación online adicional."),
+    use_ai: bool = Form(default=False, description="Opcional; permite llamadas a servicios IA configurados."),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
@@ -201,7 +181,7 @@ async def upload_pdf(
 
     ingest.save_upload(content, file.filename)
     try:
-        data = ingest.process_pdf(content, cid, validate_online=validate_online)
+        data = ingest.process_pdf(content, cid, validate_online=validate_online, use_ai=use_ai)
     except ValueError as exc:
         telemetry.record_event(success=False, latency_ms=(time.monotonic() - t0) * 1000)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -253,6 +233,7 @@ async def upload_zip(
     file: UploadFile = File(..., description="Archivo ZIP con múltiples PDFs CSF."),
     company_id: str | None = Form(default=None, description="Opcional. Déjalo vacío en Swagger.", examples=[""]),
     validate_online: bool = Form(default=False, description="Si true, intenta validación online adicional."),
+    use_ai: bool = Form(default=False, description="Opcional; permite llamadas a servicios IA configurados."),
     ctx: SecurityContext = Depends(role_guard("operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
@@ -264,7 +245,7 @@ async def upload_zip(
         raise HTTPException(status_code=400, detail="Se requiere un archivo ZIP.")
 
     ingest.save_upload(content, file.filename)
-    raw_results = ingest.process_zip(content, cid, validate_online=validate_online)
+    raw_results = ingest.process_zip(content, cid, validate_online=validate_online, use_ai=use_ai)
 
     output: List[UploadResult] = []
     for item in raw_results:

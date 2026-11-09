@@ -1,5 +1,6 @@
 from typing import Optional
 from pydantic_settings import BaseSettings
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -82,6 +83,14 @@ class Settings(BaseSettings):
     AI_FIELD_VALIDATION_ENABLED: bool = False
     AI_FIELD_VALIDATION_AUTO_APPLY: bool = False
     AI_FIELD_VALIDATION_MIN_CONFIDENCE: float = 0.85
+
+    # Local OCR. These limits bound work per PDF; no provider API is used.
+    CSF_OCR_ENABLED: bool = True
+    CSF_OCR_LANGUAGE: str = "spa+eng"
+    CSF_OCR_TIMEOUT_SECONDS: float = Field(default=45, ge=1, le=90)
+    CSF_PDF_MAX_PAGES: int = Field(default=8, ge=1, le=20)
+    CSF_OCR_MAX_PAGES: int = Field(default=5, ge=1, le=8)
+    CSF_OCR_MIN_CONFIDENCE: float = Field(default=85, ge=0, le=100)
 
     # Geolocalización por código postal (MX)
     GEO_CP_ENABLED: bool = True

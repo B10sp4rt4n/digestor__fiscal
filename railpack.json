@@ -1,0 +1,6 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "deploy": {
+    "aptPackages": ["...", "fonts-dejavu-core", "tesseract-ocr", "tesseract-ocr-spa", "tesseract-ocr-eng", "tesseract-ocr-osd"]
+  }
+}

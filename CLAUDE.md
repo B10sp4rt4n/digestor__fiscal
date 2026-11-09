@@ -69,7 +69,9 @@ app/
 - `process_pdf(content, company_id)` → extrae todos los campos, retorna dict completo.
 - `process_zip(content, company_id)` → itera PDFs dentro del ZIP.
 - Parser híbrido: **fast path regex** segmentado por secciones + **fallback Groq LLM** cuando faltan RFC o razón social.
-- `_extract_text_from_pdf()` usa **PyMuPDF (fitz)** (cambiado desde pypdf en commit `dc86acc`).
+- `process_pdf()` usa `app/services/pdf_text.py`: texto nativo con PyMuPDF y OCR local Tesseract para páginas escaneadas. Español/inglés, orientación y presupuestos de páginas/tiempo/píxeles.
+- La ingesta no llama IA salvo `use_ai=true` explícito; sugerencias separadas de la extracción original.
+- `GET /csf/{id}.review` expone procedencia OCR y avisos por campo, incluidos en la revisión exacta. Ver `docs/csf-local-ocr.md`.
 - `_extract_qr_from_pdf()` usa **OpenCV** para decodificar QR del PDF rasterizado.
 - `_extract_colon_pairs()` maneja labels con valor en línea siguiente (tablas del SAT, fix commit `00435a8`).
 - `_parse_csf_fields()` valida que el texto diga "CONSTANCIA DE SITUACIÓN FISCAL"; lanza `ValueError` si no.

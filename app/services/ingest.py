@@ -28,6 +28,7 @@ from pypdf import PdfReader
 from requests.exceptions import SSLError as RequestsSSLError
 
 from app.core.config import settings
+from app.services.pdf_text import extract_pdf_text, annotate_validation, raster_scale, MAX_PIXELS
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,8 @@ def _extract_qr_from_pdf(content: bytes) -> Optional[str]:
     doc = fitz.open(stream=content, filetype="pdf")
     try:
         for page in doc:
-            pix = page.get_pixmap(matrix=fitz.Matrix(2.5, 2.5), alpha=False)
+            scale = raster_scale(page.rect, dpi=180)
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
             img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
             if pix.n == 4:
                 img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
@@ -106,6 +108,8 @@ def _extract_qr_from_pdf(content: bytes) -> Optional[str]:
 
             gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
             for scale in (1.0, 1.5, 2.0):
+                if gray.size * scale * scale > MAX_PIXELS:
+                    continue
                 resized = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
                 data, _, _ = detector.detectAndDecode(resized)
                 if data:
@@ -1275,7 +1279,8 @@ def validate_qr_status(qr_text: Optional[str], validate_online: bool = False) ->
 
 def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool] = None, use_ai: bool = False) -> Dict[str, Any]:
     """Procesa un PDF de CSF y devuelve los datos extraídos."""
-    text = _extract_text_from_pdf(content)
+    extraction = extract_pdf_text(content)
+    text = extraction.text
     fields = _parse_csf_fields(text, use_ai=use_ai)
     colon_pairs = _extract_colon_pairs(text)
     crm_autofill = _build_crm_autofill(fields, colon_pairs)
@@ -1292,7 +1297,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
             crm_autofill.setdefault("geo_state", geolocation["state"])
     ai_field_corrections = _suggest_field_corrections(crm_autofill_complete, text) if use_ai else []
     corrected_json = _build_corrected_json(crm_autofill_complete, ai_field_corrections)
-    field_validation = _build_field_validation_report(crm_autofill_complete, ai_field_corrections)
+    field_validation = annotate_validation(_build_field_validation_report(crm_autofill_complete, ai_field_corrections), extraction)
     csf_hash = _sha256(content)
 
     if not fields.get("qr_text"):
@@ -1316,7 +1321,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
         "qr_text": fields.get("qr_text"),
         "qr_valid": qr_status.get("qr_valid"),
         "qr_online": qr_status.get("qr_online"),
-        "parser_source": fields.get("parser_source", "regex"),
+        "parser_source": ("ocr_tesseract" if extraction.method == "ocr" else "mixed_tesseract") if extraction.pages else fields.get("parser_source", "regex"),
         "crm_autofill": crm_autofill,
         "geolocation": geolocation,
         "ai_field_corrections": ai_field_corrections,

@@ -1277,7 +1277,7 @@ def validate_qr_status(qr_text: Optional[str], validate_online: bool = False) ->
     return {"qr_valid": qr_valid, "qr_online": qr_online}
 
 
-def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool] = None, use_ai: bool = False) -> Dict[str, Any]:
+def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool] = None, use_ai: bool = False, enrich_geolocation: bool = True) -> Dict[str, Any]:
     """Procesa un PDF de CSF y devuelve los datos extraídos."""
     extraction = extract_pdf_text(content)
     text = extraction.text
@@ -1285,7 +1285,7 @@ def process_pdf(content: bytes, company_id: str, validate_online: Optional[bool]
     colon_pairs = _extract_colon_pairs(text)
     crm_autofill = _build_crm_autofill(fields, colon_pairs)
     crm_autofill_complete = _build_crm_autofill(fields, colon_pairs, include_empty=True)
-    geolocation = _resolve_geolocation(fields.get("cp"), crm_autofill)
+    geolocation = _resolve_geolocation(fields.get("cp"), crm_autofill) if enrich_geolocation else None
     if geolocation:
         if geolocation.get("latitude") is not None:
             crm_autofill.setdefault("geo_latitude", str(geolocation["latitude"]))

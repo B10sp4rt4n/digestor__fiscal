@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional, Any
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 from app.models.audit_log import AuditLog
 
@@ -49,6 +49,11 @@ def create_audit_log(
 ) -> AuditLog:
     """Crear una nueva entrada de auditoría con cadena inmutable."""
     
+    # Serialize tenant audit writers before reading the previous link. Never hold
+    # this lock across external I/O; this function only records local evidence.
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                   {"key": "digestor:audit:" + company_id})
     # Obtener la última entrada para enlazar la cadena
     last_log = get_last_audit_log(db, company_id)
     previous_hash = last_log.chain_hash if last_log else None

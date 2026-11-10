@@ -29,7 +29,7 @@ import app.models.user             # noqa: F401
 from app.api.routers import audit_v1, backups, billing_v1, commercial_v1, csf, developer_portal, documents_v1, health, metrics_v1, upload, sync, sync_v1, telemetry as telemetry_router
 from app.api.routers import auth_router, payments_v1, cancellations_v1, fiscal_revisions_v1
 from app.api.routers import receptor_validate, sat_catalogs_v1
-from app.api.routers import production_cancellation_v1
+from app.api.routers import sat_tracking_v1, production_cancellation_v1
 from app.services import telemetry
 from app.services.document_queue import document_queue
 from app.services.outbound_delivery_service import outbound_delivery_worker
@@ -140,6 +140,7 @@ app.include_router(production_cancellation_v1.router)
 app.include_router(commercial_v1.router)
 app.include_router(payments_v1.router)
 app.include_router(cancellations_v1.router)
+app.include_router(sat_tracking_v1.router)
 app.include_router(fiscal_revisions_v1.router)
 app.include_router(csf.router)
 app.include_router(documents_v1.router)

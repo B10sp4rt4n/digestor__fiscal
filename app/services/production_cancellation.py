@@ -156,7 +156,7 @@ def soap_body(operation, fields):
     return E.tostring(root, encoding='utf-8', xml_declaration=True)
 
 
-def sat_status(root, folio):
+def sat_status(root, folio, *, allow_not_found=False):
     ns = '{http://www.sat.gob.mx/cfd/4}'
     query = '?id='+folio+'&re='+root.find(ns+'Emisor').get('Rfc')+'&rr='+root.find(ns+'Receptor').get('Rfc')
     query += '&tt='+root.get('Total')+'&fe='+root.get('Sello', '')[-8:]
@@ -167,6 +167,10 @@ def sat_status(root, folio):
     result = parse(response.text)
     values = {n.tag.rsplit('}',1)[-1]:n.text for n in result.iter()
         if n.tag.rsplit('}',1)[-1] in ('CodigoEstatus','Estado','EsCancelable','EstatusCancelacion')}
+    if allow_not_found:
+        import re
+        if re.match(r'^N\s*-?\s*602\b', values.get('CodigoEstatus') or ''):
+            return {**values, 'Estado':'No localizado'}
     if not (values.get('CodigoEstatus') or '').startswith('S -') or values.get('Estado') not in ('Vigente','Cancelado'):
         fail('El SAT no confirmó el comprobante consultado', 502)
     return values

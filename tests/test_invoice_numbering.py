@@ -119,6 +119,31 @@ def test_timeout_retains_reserved_number_and_blocks_second_send(numbering, monke
     assert numbering.query(InvoiceFolioReservation).one().folio == '000125'
     assert pac.call_count == 1
 
+def test_release_entrypoint_uses_direct_neon_host_without_changing_application_engine():
+    from sqlalchemy import create_engine
+    from scripts.install_fiscal_cycle import migration_engine
+    application = create_engine('postgresql+psycopg://synthetic:synthetic@ep-example-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require')
+    direct = migration_engine(application)
+    assert direct.url.host == 'ep-example.us-east-1.aws.neon.tech'
+    assert application.url.host == 'ep-example-pooler.us-east-1.aws.neon.tech'
+    assert direct.url.username == application.url.username and direct.url.password == application.url.password
+    assert direct.url.database == application.url.database and direct.url.query['sslmode'] == 'require'
+    direct.dispose(); application.dispose()
+
+def test_postgres_release_installer_migrates_legacy_without_renumbering(pg_engine):
+    from sqlalchemy import text
+    from scripts.install_fiscal_cycle import install as release_install
+    with pg_engine.begin() as connection:
+        before = connection.execute(text('SELECT id,series,folio,stamp_status FROM billing_draft')).all()
+        connection.execute(text('ALTER TABLE billing_draft DROP COLUMN numbering_managed'))
+    release_install(pg_engine)
+    release_install(pg_engine)
+    with pg_engine.connect() as connection:
+        assert connection.execute(text('SELECT id,series,folio,stamp_status FROM billing_draft')).all() == before
+        assert connection.scalar(text('SELECT numbering_managed FROM billing_draft')) is False
+        assert connection.scalar(text('SELECT count(*) FROM invoice_folio_reservations')) == 0
+        assert connection.scalar(text("SELECT count(*) FROM pg_trigger WHERE tgname IN ('invoice_folio_reservations_append_only','invoice_numbering_events_append_only') AND tgrelid IN ('invoice_folio_reservations'::regclass,'invoice_numbering_events'::regclass)")) == 2
+
 
 def test_reserved_number_cannot_be_rewritten_and_configuration_cannot_go_back(numbering):
     configure(numbering); draft = managed(numbering); issue(numbering, draft)

@@ -1,7 +1,7 @@
 """Explicit, additive, repeatable fiscal schema install. No PAC or customer writes.
 
 The legacy Alembic history may not be stamped by create_all-based releases.
-Apply only the four reviewed fiscal migrations; leave its version history alone.
+Apply the reviewed fiscal migrations; leave its version history alone.
 """
 import importlib.util
 from pathlib import Path
@@ -9,10 +9,23 @@ import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from alembic.operations import Operations
 from alembic.migration import MigrationContext
-from sqlalchemy import inspect, text
+from sqlalchemy import create_engine, inspect, text
 
 FILES = ('20261025_01_fiscal_acts.py','20261025_02_payment_cycle.py',
-         '20261107_01_cancellations.py','20261107_02_fiscal_revisions.py')
+         '20261107_01_cancellations.py','20261107_02_fiscal_revisions.py',
+         '20261111_01_invoice_numbering.py')
+
+
+def migration_engine(application_engine):
+    """Neon DDL utiliza el destino directo; las consultas de la app siguen en el pool."""
+    url = application_engine.url
+    if url.get_backend_name() != 'postgresql' or not url.host or not url.host.endswith('.neon.tech') or '-pooler.' not in url.host:
+        return application_engine
+    from app.core.config import settings
+    query = dict(url.query)
+    if settings.DB_SSL_REQUIRE and 'sslmode' not in query:
+        query['sslmode'] = 'require'
+    return create_engine(url.set(host=url.host.replace('-pooler.', '.', 1), query=query), pool_pre_ping=True)
 
 
 def install(engine):
@@ -34,7 +47,7 @@ def install(engine):
 
 if __name__ == '__main__':
     from app.db.session import engine
-    install(engine)
+    install(migration_engine(engine))
     from app.core.config import settings
     if settings.LIVE_CANCEL_ENABLED:
         from app.services.production_cancellation import assert_schema

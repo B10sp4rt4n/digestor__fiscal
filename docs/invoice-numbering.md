@@ -33,3 +33,7 @@ Validación automatizada con datos sintéticos: permisos, aislamiento, revisión
 97 pruebas fiscales aprobadas contra PostgreSQL 18.6 desechable, incluidas 23 de numeración. Comprobados: dos reservas concurrentes distintas, conflicto entre dos altas administrativas, migración dos veces sobre una fila previa, triggers de inmutabilidad, rollback conjunto de folio/estado/acto, aislamiento y rechazo de un XML cuyo folio/serie difiere de la solicitud. Sin red al PAC.
 
 Suite amplia: 338 aprobadas, 54 subtests aprobados y 10 fallos de OCR de CSF; el caso de imagen sin rotación también falla en el código base 631244c en este entorno. La suite completa y el recorrido visual no están aprobados. Envío a GitHub y apertura de PR autorizados por el usuario el 11 de noviembre de 2026. La publicación del código no aplica migraciones ni habilita folios reales.
+
+## Preparación de liberación
+
+El instalador ya usado por Railway incluye la migración de numeración y convierte únicamente su conexión Neon a destino directo; la aplicación conserva su pool. Pruebas fiscales actualizadas: 99 aprobadas con PostgreSQL desechable, incluidas 25 de numeración/liberación. La migración de modelos y guards se ejecutó dos veces en una copia de producción, con digest de los documentos intacto y ninguna política o reserva creada. Respaldo anterior a la liberación conservado con caducidad. GitHub Actions sigue en cola; no se declara aprobado.

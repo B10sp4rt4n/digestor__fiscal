@@ -37,3 +37,7 @@ Suite amplia: 338 aprobadas, 54 subtests aprobados y 10 fallos de OCR de CSF; el
 ## Preparación de liberación
 
 El instalador ya usado por Railway incluye la migración de numeración y convierte únicamente su conexión Neon a destino directo; la aplicación conserva su pool. Pruebas fiscales actualizadas: 99 aprobadas con PostgreSQL desechable, incluidas 25 de numeración/liberación. La migración de modelos y guards se ejecutó dos veces en una copia de producción, con digest de los documentos intacto y ninguna política o reserva creada. Respaldo anterior a la liberación conservado con caducidad. GitHub Actions sigue en cola; no se declara aprobado.
+
+## Arranque aislado del instalador
+
+La migración registra explícitamente el modelo de billing_draft, necesario cuando Railway ejecuta el instalador en un proceso nuevo sin haber importado la aplicación. La regresión reprodujo NoReferencedTableError antes del ajuste. Después, el CLI completo pasa dos ejecuciones en procesos nuevos sobre un esquema PostgreSQL previo, conservando documentos y sin crear reservas. Suite fiscal relevante: 100 pruebas aprobadas.

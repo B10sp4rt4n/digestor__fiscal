@@ -4,6 +4,7 @@ from pydantic import Field
 
 
 class Settings(BaseSettings):
+    FISCAL_NUMBERING_ENABLED: bool = False
     # Explicit maintenance deployment: deny writes and suppress startup writers.
     FISCAL_MAINTENANCE_MODE: bool = False
     FISCAL_PPD_ENABLED: bool = False

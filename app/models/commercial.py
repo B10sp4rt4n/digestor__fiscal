@@ -56,6 +56,7 @@ class BillingDraft(Base):
     payment_form = Column(String, nullable=False, default="01", server_default="01")
     series = Column(String, nullable=True, default="PF")
     folio = Column(String, nullable=True)
+    numbering_managed = Column(Boolean, nullable=False, default=False, server_default='0')
     notes = Column(Text, nullable=True)
 
     subtotal = Column(Float, nullable=False, default=0.0, server_default="0")

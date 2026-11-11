@@ -169,6 +169,8 @@ class BillingDraftUpdateRequest(BaseModel):
 
 
 class BillingDraftResponse(BaseModel):
+    numbering_managed: bool = False
+    display_folio: str | None = None
     id: str
     company_id: str
     status: str

@@ -92,14 +92,22 @@ class StartupTests(unittest.IsolatedAsyncioTestCase):
         create_all, seed = Mock(), Mock()
         queue = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
         outbound = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+        scheduled = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
         ns = {"asynccontextmanager": asynccontextmanager, "FastAPI": object,
               "FISCAL_MAINTENANCE": enabled, "Base": SimpleNamespace(metadata=SimpleNamespace(create_all=create_all)),
               "engine": SimpleNamespace(dialect=SimpleNamespace(name="sqlite")), "_seed_initial_admin": seed, "document_queue": queue,
               "outbound_delivery_worker": outbound,
-              "settings": SimpleNamespace(LIVE_CANCEL_ENABLED=False, DOCUMENT_QUEUE_WORKERS=1, SYNC_OUTBOUND_AUTOPOLL=True, ALERTS_AUTOPOLL=False)}
+              "sat_tracking_worker": scheduled,
+              "settings": SimpleNamespace(SAT_TRACKING_AUTOPOLL=False, LIVE_CANCEL_ENABLED=False, DOCUMENT_QUEUE_WORKERS=1, SYNC_OUTBOUND_AUTOPOLL=True, ALERTS_AUTOPOLL=False)}
         exec(compile(module, "candidate-lifespan", "exec"), ns)
         async with ns["lifespan"](None):
             pass
+        if enabled:
+            scheduled.start.assert_not_called()
+            scheduled.stop.assert_not_called()
+        else:
+            scheduled.start.assert_awaited_once()
+            scheduled.stop.assert_awaited_once()
         return create_all, seed, queue, outbound
 
     async def test_maintenance_skips_all_startup_and_shutdown_writers(self):

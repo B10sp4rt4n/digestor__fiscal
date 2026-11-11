@@ -1,7 +1,7 @@
 """Explicit, additive, repeatable fiscal schema install. No PAC or customer writes.
 
 The legacy Alembic history may not be stamped by create_all-based releases.
-Apply only the four reviewed fiscal migrations; leave its version history alone.
+Apply only the reviewed fiscal migrations; leave its version history alone.
 """
 import importlib.util
 from pathlib import Path
@@ -12,7 +12,7 @@ from alembic.migration import MigrationContext
 from sqlalchemy import inspect, text
 
 FILES = ('20261025_01_fiscal_acts.py','20261025_02_payment_cycle.py',
-         '20261107_01_cancellations.py','20261107_02_fiscal_revisions.py')
+         '20261107_01_cancellations.py','20261107_02_fiscal_revisions.py','20261110_01_sat_tracking.py')
 
 
 def install(engine):

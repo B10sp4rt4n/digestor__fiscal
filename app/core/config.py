@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     SAT_CACHE_TTL: int = 86400  # segundos
     SAT_ALLOW_LEGACY_TLS: bool = True
 
+    # Explicit tenant rollout; existing manual SAT consultations remain available.
+    SAT_TRACKING_AUTOPOLL: bool = False
+    SAT_TRACKING_TENANTS: list[str] = Field(default_factory=list)
+    SAT_TRACKING_INTERVAL_SECONDS: int = Field(default=21600, ge=900, le=86400)
+    SAT_TRACKING_POLL_SECONDS: int = Field(default=60, ge=30, le=3600)
+    SAT_TRACKING_BATCH_SIZE: int = Field(default=10, ge=1, le=50)
+
     # Alert thresholds
     ALERT_ERR_RATE: float = 0.05
     ALERT_BURST_EPM: int = 500

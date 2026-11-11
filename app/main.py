@@ -15,6 +15,7 @@ from app.db.session import engine
 # Importar modelos para que Alembic/Base los registre
 import app.models.audit_log         # noqa: F401
 import app.models.billing_payment  # noqa: F401
+import app.models.sat_tracking_job  # noqa: F401
 import app.models.billing_cancellation  # noqa: F401
 import app.models.fiscal_revision  # noqa: F401
 import app.models.commercial        # noqa: F401
@@ -33,6 +34,7 @@ from app.api.routers import sat_tracking_v1, production_cancellation_v1
 from app.services import telemetry
 from app.services.document_queue import document_queue
 from app.services.outbound_delivery_service import outbound_delivery_worker
+from app.services.sat_scheduler import sat_tracking_worker
 
 # Capture once: middleware and lifespan must never disagree during this process.
 FISCAL_MAINTENANCE = settings.FISCAL_MAINTENANCE_MODE
@@ -95,6 +97,10 @@ async def lifespan(app: FastAPI):
     if settings.LIVE_CANCEL_ENABLED:
         from app.services.production_cancellation import assert_schema
         assert_schema(engine)
+    if settings.SAT_TRACKING_AUTOPOLL and engine.dialect.name != 'sqlite':
+        from sqlalchemy import inspect
+        if not inspect(engine).has_table('sat_tracking_jobs'):
+            raise RuntimeError('Apply reviewed SAT tracking migration before enabling periodic reads')
     # Crear tablas en modo dev (SQLite). En producción usar Alembic.
     if engine.dialect.name == 'sqlite':
         Base.metadata.create_all(bind=engine)
@@ -105,6 +111,7 @@ async def lifespan(app: FastAPI):
     await document_queue.start(settings.DOCUMENT_QUEUE_WORKERS)
     if settings.SYNC_OUTBOUND_AUTOPOLL:
         await outbound_delivery_worker.start()
+    await sat_tracking_worker.start()
 
     task = None
     if settings.ALERTS_AUTOPOLL:
@@ -117,6 +124,7 @@ async def lifespan(app: FastAPI):
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
+    await sat_tracking_worker.stop()
     await document_queue.stop()
     if settings.SYNC_OUTBOUND_AUTOPOLL:
         await outbound_delivery_worker.stop()

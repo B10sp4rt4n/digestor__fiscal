@@ -33,6 +33,7 @@ from app.services import timbracfdi_client
 from app.services import fiscal_acts
 from app.services import sat_catalog
 from app.services import invoice_recovery
+from app.services import invoice_numbering
 from pydantic import BaseModel, ConfigDict
 from typing import Literal
 from uuid import UUID
@@ -163,6 +164,8 @@ def _serialize_draft(draft: BillingDraft) -> BillingDraftResponse:
         payment_form=draft.payment_form,
         series=draft.series,
         folio=draft.folio,
+        numbering_managed=bool(draft.numbering_managed),
+        display_folio=invoice_numbering.display_folio(draft),
         notes=draft.notes,
         subtotal=_money(draft.subtotal),
         taxes=_money(draft.taxes),
@@ -317,7 +320,7 @@ def _build_preview_html(draft: BillingDraft) -> str:
     <html lang="es">
       <head>
         <meta charset="utf-8" />
-        <title>Preview prefactura {escape(draft.folio or draft.id)}</title>
+        <title>Preview prefactura {escape(invoice_numbering.display_folio(draft))}</title>
         <style>
           body {{ font-family: Arial, sans-serif; margin: 24px; color: #111827; }}
           h1, h2, h3 {{ margin-bottom: 8px; }}
@@ -355,7 +358,7 @@ def _build_preview_html(draft: BillingDraft) -> str:
         </div>
 
         <div class="box">
-          <h3>Prefactura {escape((draft.series or '') + '-' + (draft.folio or draft.id[:8]))}</h3>
+          <h3>Prefactura {escape(invoice_numbering.display_folio(draft))}</h3>
           <div>Estatus: <strong>{escape(draft.status)}</strong></div>
           <div>Método de pago: {escape(draft.payment_method or '')} | Forma de pago: {escape(draft.payment_form or '')}</div>
           <div>Moneda: {escape(draft.currency or 'MXN')}</div>
@@ -399,7 +402,7 @@ def _build_prefactura_pdf_html(draft: BillingDraft, is_stamped: bool = False) ->
         preview_customer_regimen = "616"
         preview_customer_use_cfdi = "S01"
 
-    folio_display = (draft.series or "") + "-" + (draft.folio or draft.id[:8])
+    folio_display = invoice_numbering.display_folio(draft)
     fecha_display = datetime.now(timezone.utc).strftime("%d/%m/%Y")
 
     rows = "".join(
@@ -564,7 +567,8 @@ def _build_cfdi_xml(draft: BillingDraft) -> str:
     issue_time = datetime.now(timezone.utc) - timedelta(hours=settings.TIMBRACFDI_EMIT_OFFSET_HOURS)
     fecha = issue_time.strftime("%Y-%m-%dT%H:%M:%S")
     folio = draft.folio or draft.id
-    serie_attr = f' Serie="{escape(draft.series or "PF", quote=True)}"'
+    serie_attr = (f' Serie="{escape(draft.series or "PF", quote=True)}"'
+                  if not draft.numbering_managed or draft.series else '')
 
     customer_rfc = (draft.customer_rfc or "").strip().upper()
     customer_name = (draft.customer_name or "").strip()
@@ -772,6 +776,11 @@ def create_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, body.company_id)
     draft_id = str(uuid.uuid4())
+    if settings.FISCAL_NUMBERING_ENABLED:
+        invoice_numbering.lock_company(db, cid)
+    managed = bool(settings.FISCAL_NUMBERING_ENABLED and invoice_numbering.get_policy(db, cid))
+    if managed and {'series', 'folio'} & body.model_fields_set:
+        raise HTTPException(422, 'La serie y el folio los asigna la configuración de la empresa')
     draft = BillingDraft(
         id=draft_id,
         company_id=cid,
@@ -787,8 +796,9 @@ def create_billing_draft(
         currency=body.currency,
         payment_method=body.payment_method,
         payment_form=body.payment_form,
-        series=body.series,
-        folio=body.folio or draft_id,
+        series='' if managed else body.series,
+        folio=draft_id if managed else body.folio or draft_id,
+        numbering_managed=managed,
         notes=body.notes,
         created_by=ctx.user_id,
     )
@@ -911,6 +921,12 @@ def update_billing_draft(
 
     before = fiscal_acts.state(draft)
     updates = body.model_dump(exclude_unset=True, exclude={"items"})
+    if draft.numbering_managed and {'series', 'folio'} & updates.keys():
+        raise HTTPException(409, 'El folio administrado por la empresa se conserva en los reintentos')
+    if settings.FISCAL_NUMBERING_ENABLED and {'series', 'folio'} & updates.keys():
+        invoice_numbering.lock_company(db, cid)
+        if invoice_numbering.get_policy(db, cid):
+            raise HTTPException(409, 'La empresa administra sus folios automáticamente; conserva el número de esta prefactura')
     for field_name, value in updates.items():
         setattr(draft, field_name, value)
 
@@ -959,7 +975,7 @@ def download_billing_draft_pdf(
     draft = _get_draft_or_404(db, cid, draft_id)
 
     is_stamped = draft.stamp_status == "stamped"
-    folio = (draft.series or "PF") + "-" + (draft.folio or draft.id[:8])
+    folio = invoice_numbering.display_folio(draft)
 
     # --- helpers ---
     def _f(v, default="--") -> str:
@@ -1167,6 +1183,7 @@ def stamp_billing_draft(
         raise HTTPException(status_code=409, detail="Otra solicitud ya reservó o emitió esta factura.")
     db.expire_all()
     draft = _get_draft_or_404(db, cid, draft_id)
+    invoice_numbering.reserve(db, draft)
     fiscal_acts.append(db, draft, ctx, "stamp_reserved", before)
     db.commit()
     draft = _get_draft_or_404(db, cid, draft_id)
@@ -1212,10 +1229,16 @@ def stamp_billing_draft(
     stamp_info = timbracfdi_client.extract_stamped_document(result)
     stamped_xml = stamp_info["stamped_xml"]
     has_valid_timbre = timbracfdi_client.extract_stamp_uuid(stamped_xml) is not None
+    matches_numbered_request = True
+    if draft.numbering_managed and stamp_info['success']:
+        try:
+            matches_numbered_request = invoice_recovery.business_digest(stamped_xml) == business_hash
+        except Exception:
+            matches_numbered_request = False
 
     draft.stamped_response_json = json.dumps(result.get("provider_response"), ensure_ascii=False)
 
-    if ((stamp_info["success"] and not has_valid_timbre)
+    if ((stamp_info["success"] and (not has_valid_timbre or not matches_numbered_request))
             or (not stamp_info["success"] and not timbracfdi_client.is_explicit_stamp_rejection(result))):
         # Un OK sin XML firmado es un resultado incierto, no guardar
         # el XML original como si fuera un CFDI valido ni emitir otro timbre.

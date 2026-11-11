@@ -1,6 +1,8 @@
 """Numeración opt-in sin renumerar documentos existentes."""
 from alembic import op
 import sqlalchemy as sa
+# Registrar la tabla padre también al ejecutar el instalador en un proceso nuevo.
+from app.models.commercial import BillingDraft  # noqa: F401
 from app.models.invoice_numbering import InvoiceNumbering, InvoiceFolioReservation, InvoiceNumberingEvent
 
 revision = '20261111_01'

@@ -119,6 +119,27 @@ def test_timeout_retains_reserved_number_and_blocks_second_send(numbering, monke
     assert numbering.query(InvoiceFolioReservation).one().folio == '000125'
     assert pac.call_count == 1
 
+def test_postgres_release_cli_in_fresh_process_migrates_legacy(pg_engine):
+    import os
+    import subprocess
+    import sys
+    from sqlalchemy import text
+    with pg_engine.begin() as connection:
+        schema = connection.scalar(text('SELECT current_schema()'))
+        before = connection.execute(text('SELECT id,series,folio,stamp_status FROM billing_draft')).all()
+        connection.execute(text('ALTER TABLE billing_draft DROP COLUMN numbering_managed'))
+    url = pg_engine.url.update_query_dict({'options': '-csearch_path=' + schema}).render_as_string(hide_password=False)
+    environment = dict(os.environ, DATABASE_URL=url, DB_URL=url, DB_SSL_REQUIRE='false',
+                       AUTH_CONNECTOR='jwt', LIVE_CANCEL_ENABLED='false')
+    for _ in range(2):
+        result = subprocess.run([sys.executable, 'scripts/install_fiscal_cycle.py'],
+            cwd=Path(__file__).resolve().parents[1], env=environment, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stdout + result.stderr
+    with pg_engine.connect() as connection:
+        assert connection.execute(text('SELECT id,series,folio,stamp_status FROM billing_draft')).all() == before
+        assert connection.scalar(text('SELECT numbering_managed FROM billing_draft')) is False
+        assert connection.scalar(text('SELECT count(*) FROM invoice_folio_reservations')) == 0
+
 def test_release_entrypoint_uses_direct_neon_host_without_changing_application_engine():
     from sqlalchemy import create_engine
     from scripts.install_fiscal_cycle import migration_engine

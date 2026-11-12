@@ -1,7 +1,7 @@
 # Preparación SAT → Digestor → CIMA · contrato 0.1.0
 
-Estado: propuesta ejecutable offline. No hay conector de descarga, tablas nuevas,
-rutas HTTP, sincronización real ni receptor CIMA activado. La preparación de los
+Estado: contrato e importador offline con SQLite desechable. No hay conector de descarga,
+tablas productivas nuevas, rutas HTTP, sincronización real ni receptor CIMA activado. La preparación de los
 pasos 7/8 no cierra su implementación. No requiere PPD ni servicios adicionales.
 
 ## Base revisada
@@ -73,8 +73,10 @@ firmada temporal ni a ruta suministrada libremente por quien carga el archivo.
 
 sat_metadata.py valida datos normalizados y prepara un sobre JSON puro. Tiene
 JSON Schema y ejemplo sintético en contracts/sat-metadata/. Reimportar la misma
-observación conserva su clave aunque cambie batch_id. Una nueva consulta con
-otra fecha es otra observación. No hay deduplicación persistente implementada.
+observación conserva su clave aunque cambie batch_id. La clave también incluye
+dirección para conservar dos observaciones de una autofactura sin duplicar el
+documento. El almacén SQLite ya prueba unicidad persistente y transacciones;
+la implementación productiva y el receptor CIMA siguen pendientes.
 La clave documental permite unir posteriormente XML y estados bajo el mismo
 tenant/empresa/RFC/UUID; no crea una propuesta para documentos externos.
 
@@ -96,13 +98,59 @@ v1 existente: es un dataset adicional propuesto en versión 0.1.0.
 
 ## Siguientes entregas concretas
 
-1. Almacén/manifiesto y adaptador TXT offline con fixtures sintéticos y prueba de
-   paquete repetido/conflictivo; después migración reversible en base aislada.
+1. Adaptador TXT/ZIP y almacén/manifiesto SQLite offline implementados; completar
+   después migración reversible PostgreSQL y validación de manifiesto multipaquete.
 2. Receptor staging CIMA con aislamiento y claves únicas, sin tocar KPIs.
 3. Adaptador SAT opt-in; decidir RFC y periodo piloto y resolver custodia cifrada,
    rotación/revocación y acceso auditado a e.firma fuera del chat.
 4. Ensayo real autorizado, cobertura comparada y conciliación documental.
 
-Aceptación actual: contratos puros, comparación con CIMA y reglas comprobadas
-localmente. Fuera del alcance actual: credenciales, descarga real, tablas,
-endpoint de importación, entrega efectiva, XML enriquecido y conciliación.
+Aceptación actual: contratos, importación TXT/ZIP y persistencia local desechable
+comprobados con datos sintéticos. Fuera del alcance actual: credenciales,
+descarga real, tablas productivas, endpoint de importación, entrega efectiva,
+XML enriquecido y conciliación.
+
+## Importador y almacén offline implementados
+
+Perfil acotado sat-metadata-txt-12-v1: UTF-8 con o sin BOM, encabezado exacto de
+12 columnas, separador ~, fechas YYYY-MM-DD HH:MM:SS y estado 1/0. Los campos
+se cotejaron contra el [fixture del mantenedor PhpCfdi](https://github.com/phpcfdi/sat-ws-descarga-masiva/blob/91521b4c4d07c0b6c2b60c9551b7a6273b38ec21/tests/_files/zip/metadata.txt)
+y [DocumentStatus](https://github.com/phpcfdi/sat-ws-descarga-masiva/blob/91521b4c4d07c0b6c2b60c9551b7a6273b38ec21/src/Shared/DocumentStatus.php).
+Esto es comprobación técnica de un perfil; no prueba compatibilidad universal
+con todos los archivos del SAT. Variantes de encoding/columnas/cuentas de terceros
+se rechazan hasta verificarlas. Los ensayos propios no usan documentos del fixture
+externo: todos sus RFC, UUID, nombres y cantidades son sintéticos.
+
+- Máximo 2MiB de paquete y contenido expandido, 10 entradas TXT y 1000 filas.
+  ZIP se lee en memoria sin extraer; se rechazan rutas, enlaces, cifrado,
+  nombres duplicados y relaciones de compresión mayores de 100:1.
+- Paquete/manifiesto original y errores por entrada/línea se guardan con hash.
+  Una fila inválida o UUID conflictivo rechaza todo el paquete: sólo persiste
+  evidencia y errores; no hay escritura parcial de documentos.
+- Filas idénticas del mismo paquete se colapsan. Reimportar idénticos bytes
+  dentro del mismo alcance devuelve el primer resultado, aunque cambie la hora
+  del operador. No equivale a una nueva consulta SAT. El futuro conector debe
+  añadir identidad de solicitud y evidencia temporal del proveedor.
+- Periodos solapados no duplican una observación ya conocida. Un nuevo estado
+  agrega observación; la proyección actual sólo avanza por fecha UTC de observación.
+  Conflicto de importe/datos inmutables, o dos estados distintos en el mismo
+  instante, se bloquea. Una ausencia en el archivo no borra ni cancela nada.
+- La base exige raíz explícita existente y sufijo .sat-metadata-test.sqlite3,
+  rechaza enlaces y bases ajenas, usa permisos 0600, claves únicas, claves
+  foráneas y BEGIN IMMEDIATE. Dos conexiones se serializan; fallo SQL revierte
+  paquete, documento y observación. No carga DATABASE_URL ni credenciales.
+- Lecturas por empresa/RFC/tenant y filtro de dirección/periodo; el contexto
+  aquí lo entrega un operador de pruebas. No demuestra autenticación ni permisos
+  de una futura API. Los hashes detectan alteración accidental; no son firma ni
+  sellado de tiempo, y el archivo SQLite no es custodia productiva.
+- Cobertura siempre partial, incluso en un TXT sólo con encabezado. No existe
+  manifestación de periodo completo por procesar un archivo manual.
+
+Reproducir: `.venv/bin/python -m pytest -q tests/test_sat_metadata_contract.py tests/test_sat_metadata_import.py`.
+El caso CLI genera archivo y scope sintéticos en tmp_path e importa dos veces
+mediante scripts/import_sat_metadata_offline.py. `--help` lista contexto, periodo
+en JSON, ruta de base desechable y fecha observada; no admite URL de base remota.
+La consola sólo muestra estado, claves, recuentos y errores sin valores de filas.
+
+El JSON Schema y ejemplo CIMA conservan versión 0.1.0 de propuesta no publicada;
+el ejemplo se actualizó por la inclusión de dirección en la clave de observación.

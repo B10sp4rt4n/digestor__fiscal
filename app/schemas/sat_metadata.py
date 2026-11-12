@@ -136,7 +136,7 @@ def prepare_cima_batch(batch: MetadataBatch, *, authenticated_tenant: str,
         records.append({
             **observation,
             'document_identity': identity,
-            'idempotency_key': _key([identity, observation]),
+            'idempotency_key': _key([identity, scope.direction, observation]),
             'direccion': scope.direction,
             'enrichment_required': True,
         })

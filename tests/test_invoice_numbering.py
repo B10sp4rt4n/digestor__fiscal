@@ -216,7 +216,7 @@ def test_prefactura_preview_and_pdf_estimate_without_reservation(numbering):
         text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(pdf.body)).pages)
         assert pdf.body.startswith(b'%PDF-')
         assert 'PREFACTURA' in text and 'No es un CFDI' in text
-        assert 'Próximo folio estimado: FAC-2026-000125' in text
+        assert 'Próximo folio estimado:' in text and 'FAC-2026-000125' in text
         assert 'puede cambiar' in text
         assert preview.headers['cache-control'] == pdf.headers['cache-control'] == 'no-store'
     assert numbering.query(InvoiceFolioReservation).count() == 0

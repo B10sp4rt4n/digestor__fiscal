@@ -976,176 +976,26 @@ def download_billing_draft_pdf(
     ctx: SecurityContext = Depends(role_guard("viewer", "operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
-    from fpdf import FPDF
-    import textwrap
+    from app.services.prefactura_pdf import render_prefactura_pdf
 
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
-
     is_stamped = draft.stamp_status == "stamped"
-    folio = invoice_numbering.display_folio(draft)
     estimated_folio = invoice_numbering.estimated_folio(db, draft) if not is_stamped else None
-
-    # --- helpers ---
-    def _f(v, default="--") -> str:
-        return str(v).strip() if v else default
-
-    def _money(v) -> str:
-        try:
-            return f"${float(v):,.2f}"
-        except Exception:
-            return "—"
-
-    # --- extraer UUID si está timbrado ---
     uuid_cfdi = ""
     if is_stamped and draft.stamped_xml_base64:
-        import base64, re as _re
         try:
-            xml_txt = base64.b64decode(draft.stamped_xml_base64).decode("utf-8", errors="ignore")
-            m = _re.search(r'UUID="([^"]+)"', xml_txt)
-            if m:
-                uuid_cfdi = m.group(1)
-        except Exception:
+            from xml.etree import ElementTree as ET
+            root = ET.fromstring(base64.b64decode(draft.stamped_xml_base64))
+            timbre = root.find('.//{http://www.sat.gob.mx/TimbreFiscalDigital}TimbreFiscalDigital')
+            uuid_cfdi = timbre.get('UUID', '') if timbre is not None else ''
+        except (ValueError, ET.ParseError):
             pass
-
-    # --- construir PDF con fpdf2 ---
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_margins(15, 15, 15)
-    W = pdf.w - 30
-
-    # Registrar fuente Unicode si DejaVuSans disponible, si no usar Helvetica
-    _font = "Helvetica"
-    try:
-        import os
-        for _dir in ("/usr/share/fonts/truetype/dejavu", "/usr/local/share/fonts", "/app/fonts"):
-            _regular = os.path.join(_dir, "DejaVuSans.ttf")
-            _bold = os.path.join(_dir, "DejaVuSans-Bold.ttf")
-            if os.path.isfile(_regular) and os.path.isfile(_bold):
-                pdf.add_font("DJV", "", _regular)
-                pdf.add_font("DJV", "B", _bold)
-                pdf.add_font("DJV", "I", _regular)  # fallback: regular as italic
-                _font = "DJV"
-                break
-    except Exception:
-        pass
-
-    # Encabezado azul
-    pdf.set_fill_color(29, 78, 216)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font(_font, "B", 18)
-    pdf.cell(W, 14, "PREFACTURA" if not is_stamped else "CFDI TIMBRADO", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(_font, "", 9)
-    label = f"Próximo folio estimado: {estimated_folio}" if estimated_folio else f"Folio: {folio}"
-    if is_stamped and uuid_cfdi:
-        label += f"   |   UUID: {uuid_cfdi}"
-    pdf.cell(W, 7, label, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
-
-    if not is_stamped:
-        pdf.set_text_color(146, 64, 14)
-        pdf.set_font(_font, "", 8)
-        notice = "Documento preliminar - No es un CFDI."
-        if estimated_folio:
-            notice += " El número se confirma al iniciar el timbrado y puede cambiar."
-        pdf.multi_cell(W, 5, notice, new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(3)
-
-    # Datos emisor / receptor
-    pdf.set_text_color(0, 0, 0)
-    col = W / 2 - 2
-    y_after = pdf.get_y()
-
-    def _party_box(x, title, lines):
-        pdf.set_xy(x, y_after)
-        pdf.set_font(_font, "B", 8)
-        pdf.set_fill_color(241, 245, 249)
-        pdf.cell(col, 6, title, fill=True, new_x="RIGHT", new_y="TOP")
-        pdf.ln(0)
-        pdf.set_font(_font, "", 8)
-        for line in lines:
-            pdf.set_xy(x, pdf.get_y() + 6)
-            pdf.multi_cell(col, 5, line)
-
-    emisor_lines = [
-        _f(draft.emitter_name, "Emisor"),
-        f"RFC: {_f(draft.emitter_rfc)}",
-        f"Régimen: {_f(draft.emitter_regimen)}",
-        f"CP: {_f(draft.place_of_issue)}",
-    ]
-    receptor_lines = [
-        _f(draft.customer_name),
-        f"RFC: {_f(draft.customer_rfc)}",
-        f"Uso CFDI: {_f(draft.customer_use_cfdi)}",
-        f"Régimen Fiscal: {_f(draft.customer_regimen)}",
-        f"CP: {_f(draft.customer_zip)}",
-    ]
-    _party_box(15, "EMISOR", emisor_lines)
-    _party_box(15 + col + 4, "RECEPTOR", receptor_lines)
-
-    # Avanzar Y al máximo de ambas columnas
-    pdf.set_xy(15, pdf.get_y() + 8)
-    pdf.ln(2)
-
-    # Tabla de partidas
-    pdf.set_fill_color(29, 78, 216)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font(_font, "B", 8)
-    headers = [("#", 8), ("Clave", 20), ("Concepto", 80), ("Cant", 15), ("P.Unit", 25), ("Importe", 25)]
-    for h, w in headers:
-        pdf.cell(w, 7, h, border=1, fill=True)
-    pdf.ln()
-
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font(_font, "", 8)
-    items = draft.items or []
-    fill_row = False
-    for i, item in enumerate(items, 1):
-        pdf.set_fill_color(248, 250, 252) if fill_row else pdf.set_fill_color(255, 255, 255)
-        desc = _f(item.description)
-        desc_short = desc[:55] + "..." if len(desc) > 55 else desc
-        pdf.cell(8, 6, str(i), border=1, fill=fill_row)
-        pdf.cell(20, 6, _f(item.sku or item.sat_product_code), border=1, fill=fill_row)
-        pdf.cell(80, 6, desc_short, border=1, fill=fill_row)
-        pdf.cell(15, 6, str(item.quantity or 1), align="R", border=1, fill=fill_row)
-        pdf.cell(25, 6, unit_text(item.unit_price), align="R", border=1, fill=fill_row)
-        pdf.cell(25, 6, _money(item.line_subtotal), align="R", border=1, fill=fill_row)
-        pdf.ln()
-        fill_row = not fill_row
-
-    pdf.ln(4)
-
-    # Totales
-    pdf.set_font(_font, "", 9)
-    totales = [
-        ("Subtotal", _money(draft.subtotal)),
-        ("IVA (16%)", _money(draft.taxes)),
-        ("TOTAL", _money(draft.total)),
-    ]
-    for label_t, valor in totales:
-        pdf.set_x(15 + W - 60)
-        bold = label_t == "TOTAL"
-        pdf.set_font(_font, "B" if bold else "", 9 if not bold else 11)
-        pdf.cell(35, 7, label_t, align="R")
-        pdf.cell(25, 7, valor, align="R", border=1)
-        pdf.ln()
-
-    # Footer
-    pdf.set_y(-20)
-    pdf.set_font(_font, "I", 7)
-    pdf.set_text_color(120, 120, 120)
-    from datetime import date
-    pdf.cell(W, 5, f"Generado el {date.today().strftime('%d/%m/%Y')} - Digestor Fiscal", align="C")
-
-    pdf_bytes = bytes(pdf.output())
-
+    pdf_bytes = render_prefactura_pdf(draft, display_folio=invoice_numbering.display_folio(draft),
+                                     estimated_folio=estimated_folio, uuid_cfdi=uuid_cfdi)
     filename = f"prefactura_{draft.id}.pdf"
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
-    )
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
 
 
 @router.post(

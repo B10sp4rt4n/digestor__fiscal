@@ -280,7 +280,7 @@ def _get_draft_or_404(db: Session, company_id: str, draft_id: str) -> BillingDra
     return draft
 
 
-def _build_preview_html(draft: BillingDraft) -> str:
+def _build_preview_html(draft: BillingDraft, estimated_folio: str | None = None) -> str:
     missing = _missing_fields(draft)
     customer_rfc = (draft.customer_rfc or "").strip().upper()
     preview_customer_name = draft.customer_name or ""
@@ -315,6 +315,12 @@ def _build_preview_html(draft: BillingDraft) -> str:
             + "</div>"
         )
 
+    folio_notice = (
+        f'<div class="warning"><strong>Próximo folio estimado: {escape(estimated_folio)}</strong>'
+        '<div>El número se confirma al iniciar el timbrado y puede cambiar. Este documento no es un CFDI.</div></div>'
+        if estimated_folio else ''
+    )
+
     return f"""
     <!doctype html>
     <html lang="es">
@@ -338,6 +344,7 @@ def _build_preview_html(draft: BillingDraft) -> str:
       </head>
       <body>
         <div class="watermark">Documento preliminar / No timbrado</div>
+        {folio_notice}
         {warning}
         <div class="meta">
           <div class="box">
@@ -954,7 +961,8 @@ def preview_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
-    return HTMLResponse(content=_build_preview_html(draft))
+    return HTMLResponse(content=_build_preview_html(draft, invoice_numbering.estimated_folio(db, draft)),
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get(
@@ -976,6 +984,7 @@ def download_billing_draft_pdf(
 
     is_stamped = draft.stamp_status == "stamped"
     folio = invoice_numbering.display_folio(draft)
+    estimated_folio = invoice_numbering.estimated_folio(db, draft) if not is_stamped else None
 
     # --- helpers ---
     def _f(v, default="--") -> str:
@@ -1028,11 +1037,20 @@ def download_billing_draft_pdf(
     pdf.set_font(_font, "B", 18)
     pdf.cell(W, 14, "PREFACTURA" if not is_stamped else "CFDI TIMBRADO", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
     pdf.set_font(_font, "", 9)
-    label = f"Folio: {folio}"
+    label = f"Próximo folio estimado: {estimated_folio}" if estimated_folio else f"Folio: {folio}"
     if is_stamped and uuid_cfdi:
         label += f"   |   UUID: {uuid_cfdi}"
     pdf.cell(W, 7, label, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
+
+    if not is_stamped:
+        pdf.set_text_color(146, 64, 14)
+        pdf.set_font(_font, "", 8)
+        notice = "Documento preliminar - No es un CFDI."
+        if estimated_folio:
+            notice += " El número se confirma al iniciar el timbrado y puede cambiar."
+        pdf.multi_cell(W, 5, notice, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(3)
 
     # Datos emisor / receptor
     pdf.set_text_color(0, 0, 0)
@@ -1122,11 +1140,11 @@ def download_billing_draft_pdf(
 
     pdf_bytes = bytes(pdf.output())
 
-    filename = f"prefactura_{folio}.pdf".replace(" ", "_")
+    filename = f"prefactura_{draft.id}.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
     )
 
 

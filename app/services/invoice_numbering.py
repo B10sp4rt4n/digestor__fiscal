@@ -108,6 +108,23 @@ def reserve(db, draft):
     return row
 
 
+def estimated_folio(db, draft):
+    """Consulta orientativa: no reserva números ni modifica el borrador."""
+    if not draft.numbering_managed or draft.folio != draft.id or draft.stamp_status == 'stamped':
+        return None
+    policy = get_policy(db, draft.company_id)
+    if policy is None:
+        return None
+    year = current_year()
+    if year < policy.period_year:
+        return None
+    series = series_for(policy, year)
+    number = max(next_for(policy, year), high_water(db, draft.company_id, series) + 1)
+    if number > MAX_NUMBER:
+        return None
+    return '-'.join(part for part in [series, str(number).zfill(policy.digits)] if part)
+
+
 def display_folio(draft):
     if draft.numbering_managed and draft.folio == draft.id:
         return 'Por asignar al timbrar'

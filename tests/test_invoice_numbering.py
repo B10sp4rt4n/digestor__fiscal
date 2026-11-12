@@ -204,6 +204,63 @@ def test_managed_prefactura_has_no_definitive_folio_until_stamp(numbering):
         api.create_billing_draft(api.BillingDraftCreateRequest(series='MANUAL'), CTX, numbering)
 
 
+def test_prefactura_preview_and_pdf_estimate_without_reservation(numbering):
+    from io import BytesIO
+    from pypdf import PdfReader
+    configure(numbering); draft = managed(numbering)
+    for _ in range(2):
+        preview = api.preview_billing_draft(draft.id, None, CTX, numbering)
+        assert 'Próximo folio estimado: FAC-2026-000125' in preview.body.decode()
+        assert 'puede cambiar' in preview.body.decode()
+        pdf = api.download_billing_draft_pdf(draft.id, None, CTX, numbering)
+        text = '\n'.join(page.extract_text() for page in PdfReader(BytesIO(pdf.body)).pages)
+        assert pdf.body.startswith(b'%PDF-')
+        assert 'PREFACTURA' in text and 'No es un CFDI' in text
+        assert 'Próximo folio estimado: FAC-2026-000125' in text
+        assert 'puede cambiar' in text
+        assert preview.headers['cache-control'] == pdf.headers['cache-control'] == 'no-store'
+    assert numbering.query(InvoiceFolioReservation).count() == 0
+    assert service.get_policy(numbering, CTX.tenant_id).next_number == 125
+    assert draft.folio == draft.id
+    other = seed(numbering, id='another', folio='another', numbering_managed=True)
+    issue(numbering, other)
+    assert service.estimated_folio(numbering, draft) == 'FAC-2026-000126'
+    assert 'FAC-2026-000126' in api.preview_billing_draft(draft.id, None, CTX, numbering).body.decode()
+    assert draft.folio == draft.id
+    with pytest.raises(HTTPException) as exc:
+        api.download_billing_draft_pdf(draft.id, None, SecurityContext('other', 'viewer', 'viewer'), numbering)
+    assert exc.value.status_code == 404
+
+
+def test_prefactura_estimate_preserves_legacy_and_reserved_folios(numbering):
+    configure(numbering)
+    legacy = seed(numbering, id='legacy', folio='000099', series='OLD')
+    assert service.estimated_folio(numbering, legacy) is None
+    assert 'Próximo folio estimado' not in api.preview_billing_draft(legacy.id, None, CTX, numbering).body.decode()
+    draft = managed(numbering); issue(numbering, draft)
+    assert service.estimated_folio(numbering, draft) is None
+    assert 'FAC-2026-000125' in api.preview_billing_draft(draft.id, None, CTX, numbering).body.decode()
+    assert 'Próximo folio estimado' not in api.preview_billing_draft(draft.id, None, CTX, numbering).body.decode()
+
+
+@pytest.mark.parametrize('annual, expected', [(True, '000001'), (False, '000125')])
+def test_prefactura_estimate_uses_current_year_and_policy(numbering, monkeypatch, annual, expected):
+    configure(numbering, reset_annually=annual); draft = managed(numbering)
+    monkeypatch.setattr(service, 'current_year', lambda: 2027)
+    assert service.estimated_folio(numbering, draft) == 'FAC-2027-' + expected
+    assert service.get_policy(numbering, CTX.tenant_id).period_year == 2026
+    assert numbering.query(InvoiceFolioReservation).count() == 0
+
+
+def test_prefactura_estimate_uses_history_and_hides_exhausted_series(numbering):
+    configure(numbering); draft = managed(numbering)
+    seed(numbering, id='imported', series='FAC-2026', folio='000130')
+    assert service.estimated_folio(numbering, draft) == 'FAC-2026-000131'
+    seed(numbering, id='limit', series='FAC-2026', folio='999999999999')
+    assert service.estimated_folio(numbering, draft) is None
+    assert numbering.query(InvoiceFolioReservation).count() == 0
+
+
 def test_postgres_concurrent_reservations_are_unique_and_evidence_is_immutable(pg_engine, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier

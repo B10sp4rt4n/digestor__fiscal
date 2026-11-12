@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 from app.services.sat_metadata_postgres import assert_test_target
 from app.services.sat_metadata_import import digest, encoded
 
-VERSION = 'sat-outbox-test-0.1.0'
+VERSION = 'sat-outbox-test-0.2.0'
 
 
 class DisposableMetadataOutbox:
@@ -32,7 +32,7 @@ class DisposableMetadataOutbox:
                     'payload TEXT NOT NULL, payload_hash TEXT NOT NULL, status TEXT NOT NULL, '
                     'attempts INTEGER NOT NULL DEFAULT 0, token TEXT, lease_until TIMESTAMPTZ, '
                     'next_attempt TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), '
-                    'ack TEXT, ack_hash TEXT, last_error TEXT)')
+                    'ack TEXT, ack_hash TEXT, last_error TEXT, evidence TEXT, evidence_hash TEXT)')
 
     def _path(self, db):
         db.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(self.schema)))
@@ -62,21 +62,44 @@ class DisposableMetadataOutbox:
         return encoded([scope.tenant_id, scope.empresa_id, scope.empresa_rfc])
 
     def enqueue_package(self, store, package_key, scope, **auth):
-        owner = self._owner(scope, auth)
         result = store.read_package(package_key, scope, **auth)
         if not result or result['status'] != 'validated' or not result['envelope']:
             raise ValueError('Validated persisted package required')
-        payload = encoded(result['envelope'])
+        return self._enqueue_verified(result['envelope'], scope, **auth)
+
+    def enqueue_manifest(self, store, manifest, **auth):
+        from uuid import NAMESPACE_URL, uuid5
+        from app.services.sat_metadata_manifest import assemble_packages
+        assembled = assemble_packages(store, manifest, **auth)
+        if assembled['package_set_status'] != 'complete':
+            raise ValueError('Incomplete or conflicting declared package set')
+        sha = assembled['manifest_sha256']
+        body = {'dataset': 'sat_metadata_observation', 'schema_version': '0.1.0',
+            'batch_id': str(uuid5(NAMESPACE_URL, 'manifest:'+sha)),
+            'scope': manifest.scope.model_dump(mode='json'), 'coverage': 'partial', 'phase': 'validated',
+            'manifest_ref': 'local-manifest-set:'+sha, 'manifest_sha256': sha,
+            'expected_count': assembled['unique_documents'], 'records': assembled['records']}
+        declaration = manifest.model_dump(mode='json')
+        declaration['packages'] = sorted(declaration['packages'], key=lambda p: p['package_key'])
+        evidence = {'manifest': declaration, 'provenance': assembled['provenance']}
+        return self._enqueue_verified(body, manifest.scope, evidence=evidence, **auth)
+
+    def _enqueue_verified(self, envelope, scope, *, evidence=None, **auth):
+        owner = self._owner(scope, auth)
+        payload = encoded(envelope)
         payload_hash = digest(payload.encode())
-        delivery_id = digest(encoded([owner, result['envelope']['batch_id']]).encode())
+        evidence_text = encoded(evidence) if evidence is not None else None
+        evidence_hash = digest(evidence_text.encode()) if evidence_text else None
+        delivery_id = digest(encoded([owner, envelope['batch_id']]).encode())
         with self.connection() as db:
             row = db.execute('SELECT * FROM deliveries WHERE id=%s AND owner=%s', (delivery_id, owner)).fetchone()
             if row:
-                if row['payload_hash'] != payload_hash or digest(row['payload'].encode()) != row['payload_hash']:
+                if (row['payload_hash'] != payload_hash or digest(row['payload'].encode()) != row['payload_hash']
+                        or row['evidence_hash'] != evidence_hash):
                     raise ValueError('Immutable delivery conflict')
             else:
-                db.execute("INSERT INTO deliveries (id,owner,payload,payload_hash,status) VALUES (%s,%s,%s,%s,'pending')",
-                           (delivery_id, owner, payload, payload_hash))
+                db.execute("INSERT INTO deliveries (id,owner,payload,payload_hash,status,evidence,evidence_hash) VALUES (%s,%s,%s,%s,'pending',%s,%s)",
+                           (delivery_id, owner, payload, payload_hash, evidence_text, evidence_hash))
         return delivery_id
 
     def read(self, delivery_id, scope, **auth):
@@ -84,7 +107,8 @@ class DisposableMetadataOutbox:
         with self.connection() as db:
             row = db.execute('SELECT * FROM deliveries WHERE id=%s AND owner=%s', (delivery_id, owner)).fetchone()
             if row and (digest(row['payload'].encode()) != row['payload_hash']
-                        or row['ack'] is not None and digest(row['ack'].encode()) != row['ack_hash']):
+                        or row['ack'] is not None and digest(row['ack'].encode()) != row['ack_hash']
+                        or row['evidence'] is not None and digest(row['evidence'].encode()) != row['evidence_hash']):
                 raise ValueError('Outbox integrity mismatch')
             return row
 

@@ -232,3 +232,29 @@ El transporte de estas pruebas es una función sintética inyectada, no HTTP rea
 no se afirma entrega productiva o autenticidad criptográfica del acuse. La identidad
 de servicio y la API protegida siguen pendientes. Esta cola encola paquetes individuales;
 no transforma el ensamblado multipaquete en cobertura total o lote de entrega.
+
+### API local firmada y manifiestos entregables
+
+El transporte sat_metadata_http.py sólo admite HTTP loopback explícito, sin
+redirecciones, con timeout y límite de respuesta. Firma HMAC sobre audiencia,
+servicio, método, ruta, timestamp, nonce y huella de los bytes. CIMA agrega una
+factory HTTP opt-in con claves y grants (tenant, empresa, RFC) de configuración
+confiable; verifica expiración, firma, ventana temporal, nonce y permisos antes
+de escribir. Revocación de la configuración se comprueba en cada solicitud.
+
+La outbox 0.2.0 agrega evidencia/hash del manifiesto y todas las procedencias al
+encolar un conjunto completo declarado. El sobre conserva coverage=partial,
+deduplica documentos y obtiene batch_id estable por huella del manifiesto. No
+fusiona estados contradictorios y mantiene el límite de 1000 documentos. Versiones
+anteriores del esquema de laboratorio se rechazan: no hay migración productiva.
+
+Ensayo HTTP real con PostgreSQL: dos paquetes, cola persistente, API firmada,
+receptor CIMA, pérdida simulada de la primera respuesta después de su commit y
+reintento que recupera exactamente el mismo recibo. Un recibo y dos documentos
+persistidos. El ensayo no consulta SAT/PAC ni requiere PPD/e.firma.
+
+Esta API enlaza sólo loopback y no está registrada en Streamlit, Next ni servidores
+productivos. Los grants son configuración explícita de laboratorio, no consulta
+a membresías productivas. Nonces se guardan en memoria del proceso, no entre
+reinicios/instancias. Para publicar faltan transporte TLS, custodia/rotación real
+de claves, integración con membresías, protección de despliegue y replay distribuido.

@@ -139,6 +139,7 @@ def test_postgres_release_cli_in_fresh_process_migrates_legacy(pg_engine):
         assert connection.execute(text('SELECT id,series,folio,stamp_status FROM billing_draft')).all() == before
         assert connection.scalar(text('SELECT numbering_managed FROM billing_draft')) is False
         assert connection.scalar(text('SELECT count(*) FROM invoice_folio_reservations')) == 0
+        assert connection.scalar(text('SELECT count(*) FROM sat_tracking_jobs')) == 0
 
 def test_release_entrypoint_uses_direct_neon_host_without_changing_application_engine():
     from sqlalchemy import create_engine
@@ -163,6 +164,7 @@ def test_postgres_release_installer_migrates_legacy_without_renumbering(pg_engin
         assert connection.execute(text('SELECT id,series,folio,stamp_status FROM billing_draft')).all() == before
         assert connection.scalar(text('SELECT numbering_managed FROM billing_draft')) is False
         assert connection.scalar(text('SELECT count(*) FROM invoice_folio_reservations')) == 0
+        assert connection.scalar(text('SELECT count(*) FROM sat_tracking_jobs')) == 0
         assert connection.scalar(text("SELECT count(*) FROM pg_trigger WHERE tgname IN ('invoice_folio_reservations_append_only','invoice_numbering_events_append_only') AND tgrelid IN ('invoice_folio_reservations'::regclass,'invoice_numbering_events'::regclass)")) == 2
 
 

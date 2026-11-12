@@ -20,6 +20,7 @@ import app.models.usuario   # noqa
 import app.models.evento    # noqa
 import app.models.user      # noqa
 import app.models.billing_payment  # noqa: F401
+import app.models.sat_tracking_job  # noqa: F401
 import app.models.commercial  # noqa
 import app.models.invoice_numbering  # noqa
 import app.models.fiscal_act  # noqa

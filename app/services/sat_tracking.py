@@ -83,14 +83,14 @@ def read(db, draft, payment_id, folio, content_hash, ctx):
             raise HTTPException(409, 'Evidencia de consulta SAT inconsistente')
         data=json.loads(row.details)
         if data.get('document_hash') != content_hash: raise HTTPException(409, 'Cambió el XML consultado')
-        observations.append({'id':row.id, **{key:data.get(key) for key in ('checked_at','source','outcome','response','error')}, 'origin':'status_query'})
+        observations.append({'id':row.id, **{key:data.get(key) for key in ('checked_at','source','outcome','response','error','trigger')}, 'origin':'status_query'})
     observations += preserved(db,draft,payment_id,folio,content_hash,ctx)
     observations.sort(key=lambda row: row.get('checked_at') or '',reverse=True)
     return {'document_uuid':folio,'history':observations[:20],'latest_attempt':observations[0] if observations else None,
         'last_answer':next((row for row in observations if row['outcome']=='answered'),None)}
 
 
-def consult(db, draft, payment_id, root, folio, content_hash, ctx):
+def consult(db, draft, payment_id, root, folio, content_hash, ctx, *, trigger='manual'):
     previous=read(db,draft,payment_id,folio,content_hash,ctx)
     latest=previous['latest_attempt']
     if latest and latest.get('checked_at'):
@@ -110,6 +110,6 @@ def consult(db, draft, payment_id, root, folio, content_hash, ctx):
     audit_service.create_audit_log(db,company_id=draft.company_id,user_id=ctx.user_id,
         action='sat_status_consulted',entity_type='sat_document',entity_id=draft.id+':'+folio,
         details={'document_hash':content_hash,'payment_id':payment_id,'document_uuid':folio,
-            'checked_at':datetime.now(timezone.utc).isoformat(),'source':SOURCE,'outcome':outcome,'response':value,'error':error},
+            'checked_at':datetime.now(timezone.utc).isoformat(),'source':SOURCE,'outcome':outcome,'response':value,'error':error,'trigger':trigger},
         status='success' if outcome=='answered' else 'error')
     return {**read(db,draft,payment_id,folio,content_hash,ctx),'cached':False}

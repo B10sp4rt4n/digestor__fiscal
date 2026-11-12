@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, inspect, text
 
 FILES = ('20261025_01_fiscal_acts.py','20261025_02_payment_cycle.py',
          '20261107_01_cancellations.py','20261107_02_fiscal_revisions.py',
-         '20261111_01_invoice_numbering.py')
+         '20261111_01_invoice_numbering.py','20261110_01_sat_tracking.py')
 
 
 def migration_engine(application_engine):

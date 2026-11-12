@@ -109,6 +109,59 @@ def test_receipt_form_correction_preserves_cash_and_allows_next_partiality(db, m
     assert db.query(BillingPayment).count() == 2
 
 
+def test_rep_replacement_survives_lost_issue_cancel_and_status_without_changing_cash(db,monkeypatch):
+    """Synthetic full cycle; three independent transport interruptions, no PAC network."""
+    seed_valid(db); initial_provider=wire_provider(monkeypatch)
+    item=record(db,body('116.00','SYNTHETIC-ONE-PAYMENT'));stamp(db,item['id'])
+    receipt=db.query(PaymentReceipt).one();source=receipt.xml_base64
+    payment=db.get(BillingPayment,item['id']);declaration=payment.declaration
+    before=payments.list_payments('credit-invoice',CTX,db)
+    payload=request(db,{'payment_form':'02','operation_reference':'SYNTHETIC-CORRECTED'},item['id'])
+    prepared=action(db,'create',payload,item['id']);original=prepared['active_uuid']
+    assert action(db,'create',payload,item['id'])['history'][0]['id']==prepared['history'][0]['id']
+    captured={}
+    def lost(**kwargs):
+        captured['result']=accepted(**kwargs)
+        captured['uuid']=api.pac.extract_stamp_uuid(captured['result']['provider_response']['Xml'])
+        raise TimeoutError('Synthetic replacement accepted, response lost')
+    issue=Mock(side_effect=lost);monkeypatch.setattr(api.pac,'timbra_cfdi',issue)
+    uncertain=action(db,'stamp',payment_id=item['id'])
+    assert uncertain['history'][0]['status']=='unknown' and uncertain['active_uuid']==original
+    for operation in ['stamp','abandon','cancel-original']:
+        with pytest.raises(HTTPException):action(db,operation,payment_id=item['id'])
+    retrieve=Mock(return_value=captured['result']);monkeypatch.setattr(api.pac,'retrieve_cfdi',retrieve)
+    recovered=action(db,'reconcile',RecoverReceipt(receipt_uuid=captured['uuid']),item['id'])
+    assert recovered['history'][0]['result_uuid']==captured['uuid'] and recovered['active_uuid']==original
+    def lost_cancel(emitter,folio,reason,replacement):
+        assert folio==original and reason=='01' and replacement==captured['uuid']
+        raise TimeoutError('Synthetic cancellation response lost')
+    cancel=Mock(side_effect=lost_cancel);monkeypatch.setattr(api.pac,'cancel_cfdi',cancel)
+    cancelled=action(db,'cancel-original',payment_id=item['id'])
+    assert cancelled['history'][0]['source_cancellation_status']=='unknown'
+    action(db,'cancel-original',payment_id=item['id']);assert cancel.call_count==1
+    query=Mock(side_effect=[TimeoutError('Synthetic status read lost'),status(original)])
+    monkeypatch.setattr(api.pac,'query_cfdi_status',query)
+    with pytest.raises(HTTPException) as error:action(db,'confirm-cancellation',payment_id=item['id'])
+    assert error.value.status_code==502 and action(db,'read',payment_id=item['id'])['active_uuid']==original
+    active=action(db,'confirm-cancellation',payment_id=item['id'])
+    assert active['active_uuid']==captured['uuid'] and not active['pending']
+    root=svc.parse(base64.b64decode(active['active_xml_base64']).decode())
+    assert root.find('c:CfdiRelacionados/c:CfdiRelacionado',svc.NS).get('UUID')==original
+    after=payments.list_payments('credit-invoice',CTX,db)
+    assert after['balance']==before['balance']=='0.00' and after['paid']==before['paid']=='116.00'
+    assert after['fiscal_complete'] and after['payments'][0]['has_active_revision']
+    assert db.query(BillingPayment).count()==1 and receipt.xml_base64==source and payment.declaration==declaration
+    assert (initial_provider.call_count,issue.call_count,retrieve.call_count,cancel.call_count,query.call_count)==(1,1,1,1,2)
+    import os,json
+    from pathlib import Path
+    if destination:=os.getenv('REP_SUBSTITUTION_EVIDENCE'):
+        folder=Path(destination);folder.mkdir(parents=True,exist_ok=False)
+        (folder/'result.json').write_text(json.dumps(dict(mode='synthetic-no-network',passed=True,
+            original_uuid=original,replacement_uuid=captured['uuid'],before=before,after=after,active=active,
+            interruptions=['replacement_response','cancellation_response','first_status_read'],
+            calls=dict(original_rep=1,replacement=1,retrieve=1,cancel=1,status=2)),indent=2,default=str))
+
+
 def test_repeated_invoice_correction_forms_a_chain_without_rewriting_sources(db, monkeypatch):
     invoice = seed_valid(db); original = invoice.stamped_xml_base64; wire_provider(monkeypatch)
     for index in range(2):

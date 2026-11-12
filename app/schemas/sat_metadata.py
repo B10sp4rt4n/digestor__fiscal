@@ -2,12 +2,13 @@
 from datetime import date, datetime
 from hashlib import sha256
 import json
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, WithJsonSchema, field_validator, model_validator
 
 RFC = r"^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$"
+SourceDatetime = Annotated[datetime, WithJsonSchema({'type': 'string', 'format': 'source-datetime'})]
 
 
 class Contract(BaseModel):
@@ -36,13 +37,13 @@ class SatMetadata(Contract):
     emisor_nombre: str | None = Field(default=None, max_length=300)
     receptor_nombre: str | None = Field(default=None, max_length=300)
     # Preserve source wall times; do not invent an offset from SAT text.
-    fecha_emision: datetime
-    fecha_certificacion: datetime
+    fecha_emision: SourceDatetime
+    fecha_certificacion: SourceDatetime
     rfc_pac: str = Field(pattern=RFC)
     total: str = Field(pattern=r'^[0-9]{1,18}(\.[0-9]{1,6})?$')
     tipo_comprobante: Literal['I', 'E', 'T', 'N', 'P']
     estatus_fiscal: Literal['vigente', 'cancelado']
-    fecha_cancelacion: datetime | None = None
+    fecha_cancelacion: SourceDatetime | None = None
     observed_at: datetime
     raw_ref: str = Field(min_length=1, max_length=1000)
     raw_sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
@@ -115,7 +116,7 @@ class CimaMetadataEnvelope(Contract):
 
 
 def _key(parts):
-    return sha256(json.dumps(parts, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
+    return sha256(json.dumps(parts, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def prepare_cima_batch(batch: MetadataBatch, *, authenticated_tenant: str,

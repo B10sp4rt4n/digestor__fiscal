@@ -1,6 +1,6 @@
 # Preparación SAT → Digestor → CIMA · contrato 0.1.0
 
-Estado: contrato e importador offline con SQLite desechable. No hay conector de descarga,
+Estado: contrato e importador offline con SQLite/PostgreSQL desechables. No hay conector de descarga,
 tablas productivas nuevas, rutas HTTP, sincronización real ni receptor CIMA activado. La preparación de los
 pasos 7/8 no cierra su implementación. No requiere PPD ni servicios adicionales.
 
@@ -99,8 +99,8 @@ v1 existente: es un dataset adicional propuesto en versión 0.1.0.
 ## Siguientes entregas concretas
 
 1. Adaptador TXT/ZIP y almacén/manifiesto SQLite offline implementados; completar
-   después migración reversible PostgreSQL y validación de manifiesto multipaquete.
-2. Receptor staging CIMA con aislamiento y claves únicas, sin tocar KPIs.
+   migración reversible PostgreSQL implementada en esquemas aislados; falta validar manifiesto multipaquete.
+2. Receptor staging CIMA y acuse implementados como función opt-in de laboratorio; falta API autenticada y outbox.
 3. Adaptador SAT opt-in; decidir RFC y periodo piloto y resolver custodia cifrada,
    rotación/revocación y acceso auditado a e.firma fuera del chat.
 4. Ensayo real autorizado, cobertura comparada y conciliación documental.
@@ -154,3 +154,40 @@ La consola sólo muestra estado, claves, recuentos y errores sin valores de fila
 
 El JSON Schema y ejemplo CIMA conservan versión 0.1.0 de propuesta no publicada;
 el ejemplo se actualizó por la inclusión de dirección en la clave de observación.
+
+## PostgreSQL y entrega conectada a CIMA en laboratorio
+
+sat_metadata_staging.py comparte las operaciones de datos; los adaptadores SQLite
+y PostgreSQL sólo resuelven sesiones y serialización. PostgreSQL exige loopback,
+base exacta sat_metadata_test, sin parámetros alternativos en DSN, y esquema
+sat_md_test_<uuid hex>. El instalador es explícito, no está en Alembic ni en el
+arranque. Up repetido conserva filas; down sólo revierte tablas de su versión,
+sin CASCADE. Objetos ajenos o dependencias impiden la reversión. El ensayo usa
+UTF-8; no toca public ni tablas productivas. La reserva transaccional serializa
+todo el esquema de prueba; no se presenta como una estrategia de escala productiva.
+
+El receptor pertenece a CIMA, módulo utils/sat_metadata_staging.py en
+B10sp4rt4n/fradma_dashboard3, con esquemas cima_md_test_<uuid hex> separados de
+Digestor. Valida el JSON Schema versionado, contexto de empresa y claves antes
+de escribir, almacena observaciones y relaciones de lote, y confirma después de
+commit. Repetir un lote devuelve exactamente el mismo acuse; un lote nuevo puede
+referir observaciones existentes sin duplicarlas. Mismo ID de lote con contenido
+distinto se rechaza. Hay pruebas con dos conexiones, pérdida de acuse, reapertura,
+fallo SQL y hashes alterados. No alimenta ventas/clientes/CxC/KPIs.
+
+El ensayo conectado usa código de ambos repositorios y transporte JSON serializado,
+con PostgreSQL real en dos esquemas. No usa HTTP ni credenciales de clientes: aún
+no hay endpoint ni resolución de membresías de una API. El CI privado de CIMA
+fija un commit público de Digestor, sin pedir acceso privado desde Digestor.
+
+Compatibilidad del borrador 0.1.0: fechas de emisión/certificación/cancelación usan
+el formato JSON Schema custom source-datetime para preservar la hora original;
+observed_at sí exige zona. CIMA registra explícitamente ambos validadores.
+Las claves usan JSON UTF-8 ordenado por claves, sin espacios, con null explícitos:
+un reordenamiento de propiedades en transporte no cambia la identidad. El contrato
+no está publicado a consumidores productivos; los ejemplos/esquemas se actualizan
+juntos y se comparan entre repositorios.
+
+Siguiente: manifiestos multipaquete, outbox/acuse verificable en Digestor y endpoint
+CIMA protegido por identidad de servicio y membresías, antes de habilitar e.firma
+y descarga real. Este avance no cierra la sincronización productiva de pasos 7/8.

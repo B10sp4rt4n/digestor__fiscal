@@ -45,12 +45,12 @@
           "title": "Receptor Nombre"
         },
         "fecha_emision": {
-          "format": "date-time",
+          "format": "source-datetime",
           "title": "Fecha Emision",
           "type": "string"
         },
         "fecha_certificacion": {
-          "format": "date-time",
+          "format": "source-datetime",
           "title": "Fecha Certificacion",
           "type": "string"
         },
@@ -86,7 +86,7 @@
         "fecha_cancelacion": {
           "anyOf": [
             {
-              "format": "date-time",
+              "format": "source-datetime",
               "type": "string"
             },
             {

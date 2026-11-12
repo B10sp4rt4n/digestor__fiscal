@@ -33,6 +33,7 @@ from app.services import timbracfdi_client
 from app.services import fiscal_acts
 from app.services import sat_catalog
 from app.services import invoice_recovery
+from app.services import invoice_numbering
 from pydantic import BaseModel, ConfigDict
 from typing import Literal
 from uuid import UUID
@@ -163,6 +164,8 @@ def _serialize_draft(draft: BillingDraft) -> BillingDraftResponse:
         payment_form=draft.payment_form,
         series=draft.series,
         folio=draft.folio,
+        numbering_managed=bool(draft.numbering_managed),
+        display_folio=invoice_numbering.display_folio(draft),
         notes=draft.notes,
         subtotal=_money(draft.subtotal),
         taxes=_money(draft.taxes),
@@ -277,7 +280,7 @@ def _get_draft_or_404(db: Session, company_id: str, draft_id: str) -> BillingDra
     return draft
 
 
-def _build_preview_html(draft: BillingDraft) -> str:
+def _build_preview_html(draft: BillingDraft, estimated_folio: str | None = None) -> str:
     missing = _missing_fields(draft)
     customer_rfc = (draft.customer_rfc or "").strip().upper()
     preview_customer_name = draft.customer_name or ""
@@ -312,12 +315,18 @@ def _build_preview_html(draft: BillingDraft) -> str:
             + "</div>"
         )
 
+    folio_notice = (
+        f'<div class="warning"><strong>Próximo folio estimado: {escape(estimated_folio)}</strong>'
+        '<div>El número se confirma al iniciar el timbrado y puede cambiar. Este documento no es un CFDI.</div></div>'
+        if estimated_folio else ''
+    )
+
     return f"""
     <!doctype html>
     <html lang="es">
       <head>
         <meta charset="utf-8" />
-        <title>Preview prefactura {escape(draft.folio or draft.id)}</title>
+        <title>Preview prefactura {escape(invoice_numbering.display_folio(draft))}</title>
         <style>
           body {{ font-family: Arial, sans-serif; margin: 24px; color: #111827; }}
           h1, h2, h3 {{ margin-bottom: 8px; }}
@@ -335,6 +344,7 @@ def _build_preview_html(draft: BillingDraft) -> str:
       </head>
       <body>
         <div class="watermark">Documento preliminar / No timbrado</div>
+        {folio_notice}
         {warning}
         <div class="meta">
           <div class="box">
@@ -355,7 +365,7 @@ def _build_preview_html(draft: BillingDraft) -> str:
         </div>
 
         <div class="box">
-          <h3>Prefactura {escape((draft.series or '') + '-' + (draft.folio or draft.id[:8]))}</h3>
+          <h3>Prefactura {escape(invoice_numbering.display_folio(draft))}</h3>
           <div>Estatus: <strong>{escape(draft.status)}</strong></div>
           <div>Método de pago: {escape(draft.payment_method or '')} | Forma de pago: {escape(draft.payment_form or '')}</div>
           <div>Moneda: {escape(draft.currency or 'MXN')}</div>
@@ -399,7 +409,7 @@ def _build_prefactura_pdf_html(draft: BillingDraft, is_stamped: bool = False) ->
         preview_customer_regimen = "616"
         preview_customer_use_cfdi = "S01"
 
-    folio_display = (draft.series or "") + "-" + (draft.folio or draft.id[:8])
+    folio_display = invoice_numbering.display_folio(draft)
     fecha_display = datetime.now(timezone.utc).strftime("%d/%m/%Y")
 
     rows = "".join(
@@ -564,7 +574,8 @@ def _build_cfdi_xml(draft: BillingDraft) -> str:
     issue_time = datetime.now(timezone.utc) - timedelta(hours=settings.TIMBRACFDI_EMIT_OFFSET_HOURS)
     fecha = issue_time.strftime("%Y-%m-%dT%H:%M:%S")
     folio = draft.folio or draft.id
-    serie_attr = f' Serie="{escape(draft.series or "PF", quote=True)}"'
+    serie_attr = (f' Serie="{escape(draft.series or "PF", quote=True)}"'
+                  if not draft.numbering_managed or draft.series else '')
 
     customer_rfc = (draft.customer_rfc or "").strip().upper()
     customer_name = (draft.customer_name or "").strip()
@@ -772,6 +783,11 @@ def create_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, body.company_id)
     draft_id = str(uuid.uuid4())
+    if settings.FISCAL_NUMBERING_ENABLED:
+        invoice_numbering.lock_company(db, cid)
+    managed = bool(settings.FISCAL_NUMBERING_ENABLED and invoice_numbering.get_policy(db, cid))
+    if managed and {'series', 'folio'} & body.model_fields_set:
+        raise HTTPException(422, 'La serie y el folio los asigna la configuración de la empresa')
     draft = BillingDraft(
         id=draft_id,
         company_id=cid,
@@ -787,8 +803,9 @@ def create_billing_draft(
         currency=body.currency,
         payment_method=body.payment_method,
         payment_form=body.payment_form,
-        series=body.series,
-        folio=body.folio or draft_id,
+        series='' if managed else body.series,
+        folio=draft_id if managed else body.folio or draft_id,
+        numbering_managed=managed,
         notes=body.notes,
         created_by=ctx.user_id,
     )
@@ -911,6 +928,12 @@ def update_billing_draft(
 
     before = fiscal_acts.state(draft)
     updates = body.model_dump(exclude_unset=True, exclude={"items"})
+    if draft.numbering_managed and {'series', 'folio'} & updates.keys():
+        raise HTTPException(409, 'El folio administrado por la empresa se conserva en los reintentos')
+    if settings.FISCAL_NUMBERING_ENABLED and {'series', 'folio'} & updates.keys():
+        invoice_numbering.lock_company(db, cid)
+        if invoice_numbering.get_policy(db, cid):
+            raise HTTPException(409, 'La empresa administra sus folios automáticamente; conserva el número de esta prefactura')
     for field_name, value in updates.items():
         setattr(draft, field_name, value)
 
@@ -938,7 +961,8 @@ def preview_billing_draft(
 ):
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
-    return HTMLResponse(content=_build_preview_html(draft))
+    return HTMLResponse(content=_build_preview_html(draft, invoice_numbering.estimated_folio(db, draft)),
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get(
@@ -952,166 +976,26 @@ def download_billing_draft_pdf(
     ctx: SecurityContext = Depends(role_guard("viewer", "operator", "admin", "superadmin")),
     db: Session = Depends(get_db),
 ):
-    from fpdf import FPDF
-    import textwrap
+    from app.services.prefactura_pdf import render_prefactura_pdf
 
     cid = enforce_tenant_scope(ctx, company_id)
     draft = _get_draft_or_404(db, cid, draft_id)
-
     is_stamped = draft.stamp_status == "stamped"
-    folio = (draft.series or "PF") + "-" + (draft.folio or draft.id[:8])
-
-    # --- helpers ---
-    def _f(v, default="--") -> str:
-        return str(v).strip() if v else default
-
-    def _money(v) -> str:
-        try:
-            return f"${float(v):,.2f}"
-        except Exception:
-            return "—"
-
-    # --- extraer UUID si está timbrado ---
+    estimated_folio = invoice_numbering.estimated_folio(db, draft) if not is_stamped else None
     uuid_cfdi = ""
     if is_stamped and draft.stamped_xml_base64:
-        import base64, re as _re
         try:
-            xml_txt = base64.b64decode(draft.stamped_xml_base64).decode("utf-8", errors="ignore")
-            m = _re.search(r'UUID="([^"]+)"', xml_txt)
-            if m:
-                uuid_cfdi = m.group(1)
-        except Exception:
+            from xml.etree import ElementTree as ET
+            root = ET.fromstring(base64.b64decode(draft.stamped_xml_base64))
+            timbre = root.find('.//{http://www.sat.gob.mx/TimbreFiscalDigital}TimbreFiscalDigital')
+            uuid_cfdi = timbre.get('UUID', '') if timbre is not None else ''
+        except (ValueError, ET.ParseError):
             pass
-
-    # --- construir PDF con fpdf2 ---
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_margins(15, 15, 15)
-    W = pdf.w - 30
-
-    # Registrar fuente Unicode si DejaVuSans disponible, si no usar Helvetica
-    _font = "Helvetica"
-    try:
-        import os
-        for _dir in ("/usr/share/fonts/truetype/dejavu", "/usr/local/share/fonts", "/app/fonts"):
-            _regular = os.path.join(_dir, "DejaVuSans.ttf")
-            _bold = os.path.join(_dir, "DejaVuSans-Bold.ttf")
-            if os.path.isfile(_regular) and os.path.isfile(_bold):
-                pdf.add_font("DJV", "", _regular)
-                pdf.add_font("DJV", "B", _bold)
-                pdf.add_font("DJV", "I", _regular)  # fallback: regular as italic
-                _font = "DJV"
-                break
-    except Exception:
-        pass
-
-    # Encabezado azul
-    pdf.set_fill_color(29, 78, 216)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font(_font, "B", 18)
-    pdf.cell(W, 14, "PREFACTURA" if not is_stamped else "CFDI TIMBRADO", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font(_font, "", 9)
-    label = f"Folio: {folio}"
-    if is_stamped and uuid_cfdi:
-        label += f"   |   UUID: {uuid_cfdi}"
-    pdf.cell(W, 7, label, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(4)
-
-    # Datos emisor / receptor
-    pdf.set_text_color(0, 0, 0)
-    col = W / 2 - 2
-    y_after = pdf.get_y()
-
-    def _party_box(x, title, lines):
-        pdf.set_xy(x, y_after)
-        pdf.set_font(_font, "B", 8)
-        pdf.set_fill_color(241, 245, 249)
-        pdf.cell(col, 6, title, fill=True, new_x="RIGHT", new_y="TOP")
-        pdf.ln(0)
-        pdf.set_font(_font, "", 8)
-        for line in lines:
-            pdf.set_xy(x, pdf.get_y() + 6)
-            pdf.multi_cell(col, 5, line)
-
-    emisor_lines = [
-        _f(draft.emitter_name, "Emisor"),
-        f"RFC: {_f(draft.emitter_rfc)}",
-        f"Régimen: {_f(draft.emitter_regimen)}",
-        f"CP: {_f(draft.place_of_issue)}",
-    ]
-    receptor_lines = [
-        _f(draft.customer_name),
-        f"RFC: {_f(draft.customer_rfc)}",
-        f"Uso CFDI: {_f(draft.customer_use_cfdi)}",
-        f"Régimen Fiscal: {_f(draft.customer_regimen)}",
-        f"CP: {_f(draft.customer_zip)}",
-    ]
-    _party_box(15, "EMISOR", emisor_lines)
-    _party_box(15 + col + 4, "RECEPTOR", receptor_lines)
-
-    # Avanzar Y al máximo de ambas columnas
-    pdf.set_xy(15, pdf.get_y() + 8)
-    pdf.ln(2)
-
-    # Tabla de partidas
-    pdf.set_fill_color(29, 78, 216)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font(_font, "B", 8)
-    headers = [("#", 8), ("Clave", 20), ("Concepto", 80), ("Cant", 15), ("P.Unit", 25), ("Importe", 25)]
-    for h, w in headers:
-        pdf.cell(w, 7, h, border=1, fill=True)
-    pdf.ln()
-
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font(_font, "", 8)
-    items = draft.items or []
-    fill_row = False
-    for i, item in enumerate(items, 1):
-        pdf.set_fill_color(248, 250, 252) if fill_row else pdf.set_fill_color(255, 255, 255)
-        desc = _f(item.description)
-        desc_short = desc[:55] + "..." if len(desc) > 55 else desc
-        pdf.cell(8, 6, str(i), border=1, fill=fill_row)
-        pdf.cell(20, 6, _f(item.sku or item.sat_product_code), border=1, fill=fill_row)
-        pdf.cell(80, 6, desc_short, border=1, fill=fill_row)
-        pdf.cell(15, 6, str(item.quantity or 1), align="R", border=1, fill=fill_row)
-        pdf.cell(25, 6, unit_text(item.unit_price), align="R", border=1, fill=fill_row)
-        pdf.cell(25, 6, _money(item.line_subtotal), align="R", border=1, fill=fill_row)
-        pdf.ln()
-        fill_row = not fill_row
-
-    pdf.ln(4)
-
-    # Totales
-    pdf.set_font(_font, "", 9)
-    totales = [
-        ("Subtotal", _money(draft.subtotal)),
-        ("IVA (16%)", _money(draft.taxes)),
-        ("TOTAL", _money(draft.total)),
-    ]
-    for label_t, valor in totales:
-        pdf.set_x(15 + W - 60)
-        bold = label_t == "TOTAL"
-        pdf.set_font(_font, "B" if bold else "", 9 if not bold else 11)
-        pdf.cell(35, 7, label_t, align="R")
-        pdf.cell(25, 7, valor, align="R", border=1)
-        pdf.ln()
-
-    # Footer
-    pdf.set_y(-20)
-    pdf.set_font(_font, "I", 7)
-    pdf.set_text_color(120, 120, 120)
-    from datetime import date
-    pdf.cell(W, 5, f"Generado el {date.today().strftime('%d/%m/%Y')} - Digestor Fiscal", align="C")
-
-    pdf_bytes = bytes(pdf.output())
-
-    filename = f"prefactura_{folio}.pdf".replace(" ", "_")
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    pdf_bytes = render_prefactura_pdf(draft, display_folio=invoice_numbering.display_folio(draft),
+                                     estimated_folio=estimated_folio, uuid_cfdi=uuid_cfdi)
+    filename = f"prefactura_{draft.id}.pdf"
+    return Response(content=pdf_bytes, media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
 
 
 @router.post(
@@ -1167,6 +1051,7 @@ def stamp_billing_draft(
         raise HTTPException(status_code=409, detail="Otra solicitud ya reservó o emitió esta factura.")
     db.expire_all()
     draft = _get_draft_or_404(db, cid, draft_id)
+    invoice_numbering.reserve(db, draft)
     fiscal_acts.append(db, draft, ctx, "stamp_reserved", before)
     db.commit()
     draft = _get_draft_or_404(db, cid, draft_id)
@@ -1212,10 +1097,16 @@ def stamp_billing_draft(
     stamp_info = timbracfdi_client.extract_stamped_document(result)
     stamped_xml = stamp_info["stamped_xml"]
     has_valid_timbre = timbracfdi_client.extract_stamp_uuid(stamped_xml) is not None
+    matches_numbered_request = True
+    if draft.numbering_managed and stamp_info['success']:
+        try:
+            matches_numbered_request = invoice_recovery.business_digest(stamped_xml) == business_hash
+        except Exception:
+            matches_numbered_request = False
 
     draft.stamped_response_json = json.dumps(result.get("provider_response"), ensure_ascii=False)
 
-    if ((stamp_info["success"] and not has_valid_timbre)
+    if ((stamp_info["success"] and (not has_valid_timbre or not matches_numbered_request))
             or (not stamp_info["success"] and not timbracfdi_client.is_explicit_stamp_rejection(result))):
         # Un OK sin XML firmado es un resultado incierto, no guardar
         # el XML original como si fuera un CFDI valido ni emitir otro timbre.

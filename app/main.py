@@ -19,6 +19,7 @@ import app.models.sat_tracking_job  # noqa: F401
 import app.models.billing_cancellation  # noqa: F401
 import app.models.fiscal_revision  # noqa: F401
 import app.models.commercial        # noqa: F401
+import app.models.invoice_numbering  # noqa: F401
 import app.models.csf              # noqa: F401
 import app.models.document_job     # noqa: F401
 import app.models.document_sync_event  # noqa: F401
@@ -29,6 +30,7 @@ import app.models.user             # noqa: F401
 
 from app.api.routers import audit_v1, backups, billing_v1, commercial_v1, csf, developer_portal, documents_v1, health, metrics_v1, upload, sync, sync_v1, telemetry as telemetry_router
 from app.api.routers import auth_router, payments_v1, cancellations_v1, fiscal_revisions_v1
+from app.api.routers import invoice_numbering_v1
 from app.api.routers import receptor_validate, sat_catalogs_v1
 from app.api.routers import sat_tracking_v1, production_cancellation_v1
 from app.services import telemetry
@@ -82,6 +84,10 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import inspect
         if not inspect(engine).has_table("billing_fiscal_acts"):
             raise RuntimeError("Apply reviewed fiscal-act migration before leaving maintenance")
+        schema = inspect(engine)
+        if ('numbering_managed' not in {column['name'] for column in schema.get_columns('billing_draft')}
+                or not all(schema.has_table(name) for name in ('invoice_numbering', 'invoice_folio_reservations', 'invoice_numbering_events'))):
+            raise RuntimeError('Apply reviewed invoice-numbering migration before deploying this version')
     if engine.dialect.name != "sqlite" and (settings.FISCAL_PPD_ENABLED or settings.FISCAL_CORRECTIONS_ENABLED):
         from sqlalchemy import inspect
         if not all(inspect(engine).has_table(name) for name in ("billing_payments", "billing_payment_receipts", "billing_payment_acts")):
@@ -146,6 +152,7 @@ app.include_router(backups.router)
 app.include_router(billing_v1.router)
 app.include_router(production_cancellation_v1.router)
 app.include_router(commercial_v1.router)
+app.include_router(invoice_numbering_v1.router)
 app.include_router(payments_v1.router)
 app.include_router(cancellations_v1.router)
 app.include_router(sat_tracking_v1.router)

@@ -14,7 +14,7 @@ Se recuperan también las respuestas de status_consulted en las actas de cancela
 
 El servicio existente ejecuta un trabajador de lecturas SAT; no necesita otro servicio, IA, credenciales PAC nuevas ni tareas programadas de ChatGPT. La funcionalidad está apagada por defecto y no inscribe documentos anteriores automáticamente.
 
-1. Aplicar la migración aditiva `20261110_01` (o el instalador revisado `scripts/install_fiscal_cycle.py`, si la instalación conserva el historial Alembic legado). No hace backfill ni modifica facturas, pagos, REP, cancelaciones o XML. Conservar el esquema al revertir el código.
+1. Aplicar la migración aditiva `20261110_01` (o el instalador revisado `scripts/install_fiscal_cycle.py`, si la instalación conserva el historial Alembic legado). El instalador conserva la numeración ya desplegada y añade después el seguimiento SAT; la revisión `20261110_01` depende ahora de `20261111_01` para mantener una sola cabeza Alembic. No hace backfill ni modifica facturas, pagos, REP, cancelaciones o XML. Conservar el esquema al revertir el código.
 2. Configurar `SAT_TRACKING_AUTOPOLL=true` y `SAT_TRACKING_TENANTS` como lista JSON explícita de IDs autorizados. Requiere JWT sin anónimo, entorno productivo y el emisor ya configurado en `FISCAL_OPERATIONS_PRODUCTION_EMITTER_RFC`. No habilita otro emisor ni tenants nuevos por omisión. Publicar Digestor antes de Cotiza.
 3. Un administrador de Cotiza activa cada UUID desde su expediente; puede pausarlo desde el mismo panel. El backend admite roles operator/admin/superadmin; Cotiza restringe esta gestión a owner/admin/superadmin y verifica origen, tenant y visibilidad de propuesta. La consulta manual sigue disponible con su alcance anterior.
 

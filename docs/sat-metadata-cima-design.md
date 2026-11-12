@@ -191,3 +191,22 @@ juntos y se comparan entre repositorios.
 Siguiente: manifiestos multipaquete, outbox/acuse verificable en Digestor y endpoint
 CIMA protegido por identidad de servicio y membresías, antes de habilitar e.firma
 y descarga real. Este avance no cierra la sincronización productiva de pasos 7/8.
+
+### Ensamblado multipaquete de lectura implementado
+
+sat_metadata_manifest.py coteja una declaración explícita de 1–10 paquetes contra
+los recibos persistidos del mismo tenant/empresa/RFC/dirección/periodo. Comprueba
+integridad de los bytes al leer, estado validado, SHA256 y recuentos de cada
+paquete. Faltantes, rechazos y discrepancias bloquean todos los registros de salida.
+La declaración no se descubre automáticamente ni se toma de nombres de archivo.
+
+Solapamientos idénticos conservan un documento con todas sus referencias de origen.
+Dos estados distintos del mismo UUID dentro del mismo conjunto se rechazan como
+conflicto: no se selecciona uno silenciosamente. Hay límite agregado de 1000
+documentos por partición. El orden de paquetes no altera la huella del manifiesto.
+
+package_set_status=complete sólo acredita el conjunto declarado; coverage permanece
+partial. Este helper no prueba que el SAT haya finalizado una solicitud, no afirma
+que no existan otros paquetes y no se conecta al receptor CIMA ni cambia contratos
+de entrega. No persiste un nuevo lote: sólo lee los paquetes conservados. El outbox,
+la evidencia del manifiesto del proveedor y el endpoint autenticado siguen pendientes.

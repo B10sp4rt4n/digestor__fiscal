@@ -9,10 +9,12 @@ on:
       - app/services/sat_metadata_test_store.py
       - app/services/sat_metadata_staging.py
       - app/services/sat_metadata_postgres.py
+      - app/services/sat_metadata_manifest.py
       - scripts/import_sat_metadata_offline.py
       - tests/test_sat_metadata_contract.py
       - tests/test_sat_metadata_import.py
       - tests/test_sat_metadata_postgres.py
+      - tests/test_sat_metadata_manifest.py
       - contracts/sat-metadata/**
       - .github/workflows/sat-metadata-contract.yml
 permissions:
@@ -45,7 +47,7 @@ jobs:
           python3 -m venv .venv
           .venv/bin/pip install --index-url https://pypi.org/simple pydantic==2.9.2 pytest==9.0.2 'psycopg[binary]==3.2.13'
       - name: Check contracts and disposable SQLite import without production or network
-        run: .venv/bin/python -m pytest -q tests/test_sat_metadata_contract.py tests/test_sat_metadata_import.py tests/test_sat_metadata_postgres.py
+        run: .venv/bin/python -m pytest -q tests/test_sat_metadata_contract.py tests/test_sat_metadata_import.py tests/test_sat_metadata_postgres.py tests/test_sat_metadata_manifest.py
       - name: Verify published schemas and synthetic example match the contract
         run: |
           .venv/bin/python - <<'PY'

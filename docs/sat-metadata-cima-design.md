@@ -210,3 +210,25 @@ partial. Este helper no prueba que el SAT haya finalizado una solicitud, no afir
 que no existan otros paquetes y no se conecta al receptor CIMA ni cambia contratos
 de entrega. No persiste un nuevo lote: sólo lee los paquetes conservados. El outbox,
 la evidencia del manifiesto del proveedor y el endpoint autenticado siguen pendientes.
+
+### Outbox PostgreSQL de laboratorio
+
+sat_metadata_outbox.py guarda el sobre exacto de un paquete previamente validado
+y persistido; no permite encolar un archivo arbitrario ni un paquete rechazado.
+Se instala explícitamente en un esquema sat_out_test_<uuid> de sat_metadata_test
+loopback, con marcador propio y reversión sin CASCADE. No activa workers o rutas.
+
+Identidad de entrega por empresa/tenant/RFC/lote, payload inmutable y hash.
+Reservas con token y vencimiento de 60 segundos; llamada de transporte fuera de
+la transacción. Cinco intentos máximo y backoff de 2–32 segundos. Resultado incierto
+se reintenta con el mismo sobre; un acuse incorrecto bloquea la entrega.
+Un trabajador tardío no puede sobrescribir una reserva nueva ni confirmar una
+reserva vencida. Las reservas agotadas se bloquean al reclamarlas.
+
+El acuse CIMA debe coincidir en tenant/empresa/RFC, lote, dataset, versión, hash,
+UUID del recibo y recuentos. Se conserva después de la validación; releerlo permite
+recuperar la confirmación tras reiniciar Digestor sin reenviar una entrega confirmada.
+El transporte de estas pruebas es una función sintética inyectada, no HTTP real;
+no se afirma entrega productiva o autenticidad criptográfica del acuse. La identidad
+de servicio y la API protegida siguen pendientes. Esta cola encola paquetes individuales;
+no transforma el ensamblado multipaquete en cobertura total o lote de entrega.

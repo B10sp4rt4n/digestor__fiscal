@@ -1,0 +1,37 @@
+name: SAT metadata contract (offline)
+on:
+  push:
+    branches: [feat/sat-cima-metadata-contract]
+  pull_request:
+    paths:
+      - app/schemas/sat_metadata.py
+      - tests/test_sat_metadata_contract.py
+      - contracts/sat-metadata/**
+      - .github/workflows/sat-metadata-contract.yml
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install pinned contract dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --index-url https://pypi.org/simple pydantic==2.9.2 pytest==9.0.2
+      - name: Check identity, coverage and replay without application, SQL or network
+        run: .venv/bin/python -m pytest -q tests/test_sat_metadata_contract.py
+      - name: Verify published schemas and synthetic example match the contract
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          from app.schemas.sat_metadata import MetadataBatch, CimaMetadataEnvelope
+          from tests.test_sat_metadata_contract import payload, export
+          root = Path('contracts/sat-metadata')
+          for name, expected in [('normalized-batch.schema.json', MetadataBatch.model_json_schema()), ('cima-envelope.schema.json', CimaMetadataEnvelope.model_json_schema()), ('synthetic-envelope.json', export(payload()))]:
+              assert json.loads((root/name).read_text()) == expected, name
+          PY

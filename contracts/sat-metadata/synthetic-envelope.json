@@ -1,0 +1,42 @@
+{
+  "schema_version": "0.1.0",
+  "dataset": "sat_metadata_observation",
+  "batch_id": "11111111-1111-4111-8111-111111111111",
+  "scope": {
+    "tenant_id": "synthetic-tenant",
+    "empresa_id": "synthetic-company",
+    "empresa_rfc": "AAA010101AAA",
+    "direction": "emitido",
+    "period_start": "2026-10-01",
+    "period_end": "2026-10-31"
+  },
+  "coverage": "partial",
+  "phase": "validated",
+  "manifest_ref": null,
+  "manifest_sha256": null,
+  "expected_count": null,
+  "records": [
+    {
+      "cfdi_uuid": "22222222-2222-4222-8222-222222222222",
+      "emisor_rfc": "AAA010101AAA",
+      "receptor_rfc": "BBB010101BBB",
+      "emisor_nombre": null,
+      "receptor_nombre": null,
+      "fecha_emision": "2026-10-10T12:00:00",
+      "fecha_certificacion": "2026-10-10T12:01:00",
+      "rfc_pac": "CCC010101CCC",
+      "total": "116.00",
+      "tipo_comprobante": "I",
+      "estatus_fiscal": "vigente",
+      "fecha_cancelacion": null,
+      "observed_at": "2026-11-12T04:00:00Z",
+      "raw_ref": "synthetic/package-1/row-1",
+      "raw_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "source": "sat_metadata",
+      "document_identity": "322577aee86a57dd4015fffd930b642674ae75efebf17bdd6ada8f1cdd9c94b3",
+      "idempotency_key": "2d1a685a19c49c597e003f5577bcf74fd00527bc2cd49aff75699f72baa1b8b2",
+      "direccion": "emitido",
+      "enrichment_required": true
+    }
+  ]
+}

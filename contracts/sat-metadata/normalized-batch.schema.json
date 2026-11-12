@@ -1,0 +1,292 @@
+{
+  "$defs": {
+    "SatMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "cfdi_uuid": {
+          "format": "uuid",
+          "title": "Cfdi Uuid",
+          "type": "string"
+        },
+        "emisor_rfc": {
+          "pattern": "^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$",
+          "title": "Emisor Rfc",
+          "type": "string"
+        },
+        "receptor_rfc": {
+          "pattern": "^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$",
+          "title": "Receptor Rfc",
+          "type": "string"
+        },
+        "emisor_nombre": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Emisor Nombre"
+        },
+        "receptor_nombre": {
+          "anyOf": [
+            {
+              "maxLength": 300,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Receptor Nombre"
+        },
+        "fecha_emision": {
+          "format": "source-datetime",
+          "title": "Fecha Emision",
+          "type": "string"
+        },
+        "fecha_certificacion": {
+          "format": "source-datetime",
+          "title": "Fecha Certificacion",
+          "type": "string"
+        },
+        "rfc_pac": {
+          "pattern": "^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$",
+          "title": "Rfc Pac",
+          "type": "string"
+        },
+        "total": {
+          "pattern": "^[0-9]{1,18}(\\.[0-9]{1,6})?$",
+          "title": "Total",
+          "type": "string"
+        },
+        "tipo_comprobante": {
+          "enum": [
+            "I",
+            "E",
+            "T",
+            "N",
+            "P"
+          ],
+          "title": "Tipo Comprobante",
+          "type": "string"
+        },
+        "estatus_fiscal": {
+          "enum": [
+            "vigente",
+            "cancelado"
+          ],
+          "title": "Estatus Fiscal",
+          "type": "string"
+        },
+        "fecha_cancelacion": {
+          "anyOf": [
+            {
+              "format": "source-datetime",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fecha Cancelacion"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "raw_ref": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "title": "Raw Ref",
+          "type": "string"
+        },
+        "raw_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Raw Sha256",
+          "type": "string"
+        },
+        "source": {
+          "const": "sat_metadata",
+          "default": "sat_metadata",
+          "enum": [
+            "sat_metadata"
+          ],
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cfdi_uuid",
+        "emisor_rfc",
+        "receptor_rfc",
+        "fecha_emision",
+        "fecha_certificacion",
+        "rfc_pac",
+        "total",
+        "tipo_comprobante",
+        "estatus_fiscal",
+        "observed_at",
+        "raw_ref",
+        "raw_sha256"
+      ],
+      "title": "SatMetadata",
+      "type": "object"
+    },
+    "SyncScope": {
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Tenant Id",
+          "type": "string"
+        },
+        "empresa_id": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Empresa Id",
+          "type": "string"
+        },
+        "empresa_rfc": {
+          "pattern": "^[A-ZÑ&]{3,4}[0-9]{6}[A-Z0-9]{3}$",
+          "title": "Empresa Rfc",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "emitido",
+            "recibido"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "period_start": {
+          "format": "date",
+          "title": "Period Start",
+          "type": "string"
+        },
+        "period_end": {
+          "format": "date",
+          "title": "Period End",
+          "type": "string"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "empresa_id",
+        "empresa_rfc",
+        "direction",
+        "period_start",
+        "period_end"
+      ],
+      "title": "SyncScope",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0",
+      "default": "0.1.0",
+      "enum": [
+        "0.1.0"
+      ],
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "batch_id": {
+      "format": "uuid",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/$defs/SyncScope"
+    },
+    "coverage": {
+      "enum": [
+        "unknown",
+        "partial",
+        "complete"
+      ],
+      "title": "Coverage",
+      "type": "string"
+    },
+    "phase": {
+      "enum": [
+        "requested",
+        "waiting",
+        "downloaded",
+        "validated",
+        "failed",
+        "expired"
+      ],
+      "title": "Phase",
+      "type": "string"
+    },
+    "manifest_ref": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Manifest Ref"
+    },
+    "manifest_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Manifest Sha256"
+    },
+    "expected_count": {
+      "anyOf": [
+        {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Expected Count"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/SatMetadata"
+      },
+      "maxItems": 1000,
+      "title": "Observations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "batch_id",
+    "scope",
+    "coverage",
+    "phase",
+    "observations"
+  ],
+  "title": "MetadataBatch",
+  "type": "object"
+}

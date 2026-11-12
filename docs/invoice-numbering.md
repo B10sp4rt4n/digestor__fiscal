@@ -47,3 +47,11 @@ La migración registra explícitamente el modelo de billing_draft, necesario cua
 La vista previa y el PDF de una prefactura administrada aún sin reserva muestran “Próximo folio estimado”, calculado con la política vigente, el año de CDMX y el máximo histórico. No se incrementa el contador ni se escribe una reserva al consultar o descargar. El documento indica que no es un CFDI y que el número se confirma al iniciar el timbrado; otras emisiones pueden cambiar la estimación. Una serie agotada no anuncia un número inválido. Los documentos anteriores y los folios ya reservados conservan su número. Ambas respuestas son no-store. No requiere migración.
 
 Validación: 105 pruebas fiscales contra PostgreSQL desechable, extracción de texto del PDF y revisión visual de una prefactura sintética. Ningún timbrado real.
+
+## Presentación profesional de la prefactura
+
+El PDF usa encabezado con razón social del emisor, folio destacado, ficha del receptor, condiciones de pago y moneda, descripción completa, claves SAT/unidad y totales alineados. Los importes se leen del borrador guardado: no se recalculan ni se modifica su numeración. Los precios unitarios conservan entre dos y seis decimales según su precisión. La fecha visible y los metadatos del archivo se generan con America/Mexico_City.
+
+Las partidas normales pasan completas a la hoja siguiente; un concepto que supera una hoja puede continuar, conservando su texto y sin repetir el importe. Encabezados de tabla y pies con número de página se repiten. Los documentos previos conservan sus folios, y la representación de un documento timbrado conserva su UUID. Cotiza sigue usando el XML real para el PDF oficial de facturas timbradas.
+
+Validación: pruebas de texto y geometría del PDF (sin recortes de concepto, límites de impresión, paginación, precisión, fecha CDMX y legado timbrado), 111 pruebas fiscales con PostgreSQL desechable y revisión visual de documentos de una y varias hojas. No requiere migración ni dependencias nuevas; no timbra ni actualiza borradores.

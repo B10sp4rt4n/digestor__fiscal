@@ -2,7 +2,7 @@ name: Fiscal safety (isolated PostgreSQL)
 
 on:
   push:
-    branches: [fix/invoice-numbering-migration-bootstrap, feat/invoice-numbering, fix/fiscal-correction-integrity, fix/ppd-connected-cycle, feat/invoice-stamp-recovery, fix/billing-idempotency-mvp, feat/fiscal-aup-core, feat/ppd-payment-cycle, feat/fiscal-payment-cancellation, feat/ppd-production-release, feat/fiscal-general-production, fix/fiscal-confirmed-document, feat/csf-local-ocr, fix/cfdi-use-regime-catalog, feat/sat-catalog-search-aup, fix/csf-fast-review, feat/sat-status-evidence]
+    branches: [feat/prefactura-estimated-folio, fix/invoice-numbering-migration-bootstrap, feat/invoice-numbering, fix/fiscal-correction-integrity, fix/ppd-connected-cycle, feat/invoice-stamp-recovery, fix/billing-idempotency-mvp, feat/fiscal-aup-core, feat/ppd-payment-cycle, feat/fiscal-payment-cancellation, feat/ppd-production-release, feat/fiscal-general-production, fix/fiscal-confirmed-document, feat/csf-local-ocr, fix/cfdi-use-regime-catalog, feat/sat-catalog-search-aup, fix/csf-fast-review, feat/sat-status-evidence]
     paths:
       - app/**
       - tests/**

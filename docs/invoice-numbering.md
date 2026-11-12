@@ -41,3 +41,9 @@ El instalador ya usado por Railway incluye la migración de numeración y convie
 ## Arranque aislado del instalador
 
 La migración registra explícitamente el modelo de billing_draft, necesario cuando Railway ejecuta el instalador en un proceso nuevo sin haber importado la aplicación. La regresión reprodujo NoReferencedTableError antes del ajuste. Después, el CLI completo pasa dos ejecuciones en procesos nuevos sobre un esquema PostgreSQL previo, conservando documentos y sin crear reservas. Suite fiscal relevante: 100 pruebas aprobadas.
+
+## Folio estimado y PDF de prefactura
+
+La vista previa y el PDF de una prefactura administrada aún sin reserva muestran “Próximo folio estimado”, calculado con la política vigente, el año de CDMX y el máximo histórico. No se incrementa el contador ni se escribe una reserva al consultar o descargar. El documento indica que no es un CFDI y que el número se confirma al iniciar el timbrado; otras emisiones pueden cambiar la estimación. Una serie agotada no anuncia un número inválido. Los documentos anteriores y los folios ya reservados conservan su número. Ambas respuestas son no-store. No requiere migración.
+
+Validación: 105 pruebas fiscales contra PostgreSQL desechable, extracción de texto del PDF y revisión visual de una prefactura sintética. Ningún timbrado real.

@@ -9,7 +9,7 @@ from psycopg.rows import dict_row
 from app.services.sat_metadata_postgres import assert_test_target
 from app.services.sat_metadata_import import digest, encoded
 
-VERSION = 'sat-outbox-test-0.2.0'
+VERSION = 'sat-outbox-test-0.3.0'
 
 
 class DisposableMetadataOutbox:
@@ -32,7 +32,8 @@ class DisposableMetadataOutbox:
                     'payload TEXT NOT NULL, payload_hash TEXT NOT NULL, status TEXT NOT NULL, '
                     'attempts INTEGER NOT NULL DEFAULT 0, token TEXT, lease_until TIMESTAMPTZ, '
                     'next_attempt TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), '
-                    'ack TEXT, ack_hash TEXT, last_error TEXT, evidence TEXT, evidence_hash TEXT)')
+                    'ack TEXT, ack_hash TEXT, last_error TEXT, evidence TEXT, evidence_hash TEXT, '
+                    'transport_proof TEXT, transport_proof_hash TEXT)')
 
     def _path(self, db):
         db.execute(sql.SQL('SET LOCAL search_path TO {}, pg_catalog').format(sql.Identifier(self.schema)))
@@ -108,6 +109,7 @@ class DisposableMetadataOutbox:
             row = db.execute('SELECT * FROM deliveries WHERE id=%s AND owner=%s', (delivery_id, owner)).fetchone()
             if row and (digest(row['payload'].encode()) != row['payload_hash']
                         or row['ack'] is not None and digest(row['ack'].encode()) != row['ack_hash']
+                        or row['transport_proof'] is not None and digest(row['transport_proof'].encode()) != row['transport_proof_hash']
                         or row['evidence'] is not None and digest(row['evidence'].encode()) != row['evidence_hash']):
                 raise ValueError('Outbox integrity mismatch')
             return row
@@ -131,7 +133,7 @@ class DisposableMetadataOutbox:
         if not row:
             return self.read(delivery_id, scope, **auth)
         body = json.loads(row['payload'])
-        status, ack_text, error = 'retry', None, 'transport_unknown'
+        status, ack_text, proof_text, error = 'retry', None, None, 'transport_unknown'
         try:
             ack = transport(body)  # No database lock or transaction over the external call.
         except Exception:
@@ -148,16 +150,28 @@ class DisposableMetadataOutbox:
                 if (type(ack['received_records']) is not int or ack['received_records'] != len(body['records'])
                         or type(ack['new_records']) is not int or not 0 <= ack['new_records'] <= ack['received_records']):
                     raise ValueError('Mismatched count')
+                proof = getattr(ack, 'transport_proof', None)
+                if proof is not None:
+                    if (not isinstance(proof, dict) or proof.get('request_sha256') != row['payload_hash']
+                            or not isinstance(proof.get('response_body'), str)
+                            or proof.get('response_sha256') != digest(proof['response_body'].encode())
+                            or json.loads(proof['response_body']) != dict(ack)):
+                        raise ValueError('Mismatched receipt transport proof')
+                    proof_text = encoded(proof)
+                    if len(proof_text.encode()) > 131072:
+                        raise ValueError('Receipt proof limit')
                 ack_text, status, error = encoded(ack), 'acknowledged', None
             except (KeyError, TypeError, ValueError, AttributeError):
-                status, error = 'blocked', 'invalid_ack'
+                status, proof_text, error = 'blocked', None, 'invalid_ack'
         with self.connection() as db:
             # A late worker cannot overwrite a newer claim or confirm an expired reservation.
-            db.execute("UPDATE deliveries SET status=%s,ack=%s,ack_hash=%s,last_error=%s,token=NULL,lease_until=NULL, "
+            db.execute("UPDATE deliveries SET status=%s,ack=%s,ack_hash=%s,transport_proof=%s,transport_proof_hash=%s,"
+                "last_error=%s,token=NULL,lease_until=NULL, "
                 "next_attempt=clock_timestamp()+(%s * interval '1 second') "
                 "WHERE id=%s AND owner=%s AND token=%s AND lease_until>clock_timestamp()",
                 ('blocked' if status == 'retry' and row['attempts'] >= 5 else status,
-                 ack_text, digest(ack_text.encode()) if ack_text else None, error,
+                 ack_text, digest(ack_text.encode()) if ack_text else None,
+                 proof_text, digest(proof_text.encode()) if proof_text else None, error,
                  min(2**row['attempts'], 60), delivery_id, row['owner'], row['token']))
         return self.read(delivery_id, scope, **auth)
 

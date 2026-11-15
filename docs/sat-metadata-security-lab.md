@@ -5,7 +5,10 @@ habilita el vínculo real con CIMA. El importador y el contrato de metadatos 0.1
 permanecen iguales; el almacenamiento desechable outbox sube a 0.3.0 y rechaza
 esquemas de laboratorio anteriores. No constituye una migración productiva.
 
-El piloto utiliza `hardened_lab_http_transport`, con clave de respuesta distinta
+El piloto entre procesos utiliza `hardened_lab_https_transport`, con TLS 1.3 mutuo,
+CA explícita, validación de hostname y certificados de servidor/cliente. Sólo
+admite HTTPS loopback: no permite desactivar verificación o bajar a HTTP/TLS1.2.
+El ensayo HTTP previo conserva `hardened_lab_http_transport`, con clave de respuesta distinta
 de la clave de solicitud y UUID de empresa CIMA esperado explícito. No admite
 claves/destinos ausentes ni desciende al transporte legado. El helper original
 se conserva para compatibilidad y pruebas antiguas; no es el cliente del piloto.
@@ -37,11 +40,24 @@ reserva/token: solicitud referenciada por hash, respuesta exacta, firma, servici
 timestamp y nonce. No guarda claves. Permite cotejar después la firma con la clave
 de verificación correspondiente sin confundir nuevo intento con un nuevo recibo.
 
-Las claves de los ensayos son sintéticas o aleatorias efímeras. Falta custodia,
-identificación/rotación operativa de claves, TLS y autorización de despliegue.
+La prueba de transporte registra también versión TLS y huella del certificado
+verificado del receptor. No guarda material privado o secreto. TLS no reemplaza
+la firma del recibo ni la autorización de empresa.
+
+Las claves/certificados de los ensayos son aleatorios efímeros, en carpetas privadas
+separadas para cliente y servidor; se eliminan al cerrar el ensayo. Falta custodia,
+identificación/rotación operativa de claves y certificados reales, y autorización de despliegue.
 HMAC compartido no aporta no repudio ni sellado de tiempo. Este cambio no afirma
 cumplimiento SAT, cobertura completa, pagos, cartera o KPIs.
 
 La CI dedicada corre las pruebas de recibos firmados junto con la suite existente
 en PostgreSQL17 desechable. Las pruebas conectadas viven en el PR de CIMA y deben
 fijar el commit exacto de este productor. Nunca usar secretos de cuentas reales.
+
+La batería CIMA ejecuta productor y receptor en procesos OS distintos con PostgreSQL17.
+Comprueba corte real de conexión después del commit, reinicio de receptor, mismo
+recibo sin duplicados, CA/hostname/cliente no confiables, cliente sin certificado,
+rechazo TLS1.2, revocación/expiración de clave y cambio de clave HMAC de solicitud.
+La rotación demostrada es un corte explícito en archivos privados del laboratorio;
+no es un gestor de secretos con key-id firmado, solapamiento o renovación automática.
+Son procesos en el mismo host y usuario, no hosts, contenedores o cuentas productivas.

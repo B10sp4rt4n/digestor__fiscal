@@ -1,0 +1,6 @@
+# Optional acquisition worker only; not added to the production web service.
+# Reviewed upstream source pinned to an immutable commit.
+satcfdi @ git+https://github.com/SAT-CFDI/python-satcfdi.git@202a813ac91934019c9d028a8130428b54473238
+cryptography>=43,<51
+requests==2.32.3
+lxml==6.0.2

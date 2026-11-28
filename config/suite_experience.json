@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "brand": "CDC Suite",
+  "publisher": "SynAppsSys Labs",
+  "sections": [
+    "Inicio",
+    "Comercial",
+    "Fiscal",
+    "Inteligencia",
+    "Administración"
+  ],
+  "modules": {
+    "cotiza": {
+      "name": "Cotiza",
+      "section": "Comercial"
+    },
+    "digestor": {
+      "name": "Digestor Fiscal",
+      "section": "Fiscal"
+    },
+    "cima": {
+      "name": "CIMA Analytics",
+      "section": "Inteligencia"
+    }
+  },
+  "colors": {
+    "canvas": "#f4f4f5",
+    "surface": "#ffffff",
+    "ink": "#18181b",
+    "muted": "#52525b",
+    "line": "#e4e4e7",
+    "accent": "#f97316"
+  }
+}
+

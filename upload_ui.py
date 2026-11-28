@@ -9,8 +9,16 @@ import fitz
 
 from streamlit_cookies_controller import CookieController
 from app.services.ingest import format_extracted_csf_text
+from ui.suite_experience import suite_css, suite_header_html
 
 st.set_page_config(page_title="Digestor Fiscal", layout="wide")
+st.markdown(suite_css(), unsafe_allow_html=True)
+st.markdown("""<style>
+[data-testid="stAppViewContainer"]{background:var(--cdc-canvas)}
+[data-testid="stSidebar"]{background:var(--cdc-surface);border-right:1px solid var(--cdc-line)}
+[data-testid="stMainBlockContainer"]{max-width:1280px}
+[data-testid="stButton"] button,[data-testid="stFormSubmitButton"] button{min-height:44px;border-radius:8px}
+</style>""", unsafe_allow_html=True)
 
 API = os.getenv("DIGESTOR_API_BASE_URL", "http://localhost:8000").rstrip("/")
 _COOKIE = "digestor_token"
@@ -175,7 +183,8 @@ if "pdf_cache" not in st.session_state:
 #  APP PRINCIPAL (usuario autenticado)
 # ─────────────────────────────────────────
 
-st.title("📄 Centro de Carga Fiscal")
+st.markdown(suite_header_html("digestor", scope_reference=st.session_state["tenant_id"]), unsafe_allow_html=True)
+st.title("Centro de Carga Fiscal")
 
 
 def auth_headers() -> dict:
@@ -352,7 +361,7 @@ with st.sidebar:
     st.header("Sesión")
     st.markdown(f"**Usuario:** {st.session_state['username']}")
     st.markdown(f"**Rol:** {st.session_state['role']}")
-    st.markdown(f"**Tenant:** {st.session_state['tenant_id']}")
+    st.text(f"Ámbito de empresa: {st.session_state['tenant_id']}")
     if st.button("Cerrar sesión", width="stretch"):
         _clear_session()
         st.rerun()
